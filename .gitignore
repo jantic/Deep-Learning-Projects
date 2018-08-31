@@ -1,3 +1,4 @@
 data
 fastai
 .ipynb_checkpoints
+*.pyc
