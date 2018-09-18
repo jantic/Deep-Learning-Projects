@@ -43,3 +43,27 @@ class UpSampleBlock(nn.Module):
     
     def forward(self, x):
         return self.sequence(x)
+
+class ResSequential(nn.Module):
+    def __init__(self, layers, res_scale=1.0):
+        super().__init__()
+        self.res_scale = res_scale
+        self.m = nn.Sequential(*layers)
+
+    def forward(self, x): 
+        return x + self.m(x) * self.res_scale
+        
+
+class UnetBlock(nn.Module):
+    def __init__(self, up_in, x_in, n_out):
+        super().__init__()
+        up_out = x_out = n_out//2
+        self.x_conv  = nn.Conv2d(x_in,  x_out,  1)
+        self.tr_conv = UpSampleBlock(up_in, up_out, 2)
+        self.bn = nn.BatchNorm2d(n_out)
+        
+    def forward(self, up_p, x_p):
+        up_p = self.tr_conv(up_p)
+        x_p = self.x_conv(x_p)
+        cat_p = torch.cat([up_p,x_p], dim=1)
+        return self.bn(F.relu(cat_p))
