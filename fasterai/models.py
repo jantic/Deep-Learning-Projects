@@ -2,16 +2,20 @@ from fastai.torch_imports import *
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, ni, no, ks=3, stride=1, bn=True, pad=None):
+    def __init__(self, ni, no, ks=3, stride=1, bn=True, pad=None, actn=True):
         super().__init__()   
         if pad is None: pad = ks//2//stride
-        self.conv = nn.Conv2d(ni, no, ks, stride, padding=pad, bias=False)
-        self.bn = nn.BatchNorm2d(no) if bn else None
-        self.relu = nn.LeakyReLU()
-    
+
+        layers = [nn.Conv2d(ni, no, ks, stride, padding=pad)]
+        if actn:
+            layers.append(nn.LeakyReLU())
+        if bn:
+            layers.append(nn.BatchNorm2d(no))
+
+        self.seq = nn.Sequential(*layers)
+
     def forward(self, x):
-        x = self.relu(self.conv(x))
-        return self.bn(x) if self.bn else x
+        return self.seq(x)
 
 class UpSampleBlock(nn.Module):
     @staticmethod
