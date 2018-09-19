@@ -1,14 +1,23 @@
 from fastai.torch_imports import *
 
 
+class ConvBlock(nn.Module):
+    def __init__(self, ni, no, ks=3, stride=1, bn=True, pad=None):
+        super().__init__()   
+        if pad is None: pad = ks//2//stride
+        self.conv = nn.Conv2d(ni, no, ks, stride, padding=pad, bias=False)
+        self.bn = nn.BatchNorm2d(no) if bn else None
+        self.relu = nn.LeakyReLU()
+    
+    def forward(self, x):
+        x = self.relu(self.conv(x))
+        return self.bn(x) if self.bn else x
+
 class UpSampleBlock(nn.Module):
     @staticmethod
-    def _conv(ni: int, nf: int, kernel_size:int=3, actn:bool=False, stride:int=1, normalizer=None):
-        layers = [nn.Conv2d(ni, nf, kernel_size, padding=kernel_size//2, stride=stride)]
-        if normalizer is not None: 
-            layers.append(normalizer)
-        if actn: 
-            layers.append(nn.LeakyReLU())
+    def _conv(ni: int, nf: int):
+        kernel_size = 3
+        layers = [nn.Conv2d(ni, nf, kernel_size, padding=kernel_size//2, stride=1)]
         return nn.Sequential(*layers)
 
     @staticmethod
@@ -52,7 +61,7 @@ class ResSequential(nn.Module):
 
     def forward(self, x): 
         return x + self.m(x) * self.res_scale
-        
+
 
 class UnetBlock(nn.Module):
     def __init__(self, up_in, x_in, n_out):
