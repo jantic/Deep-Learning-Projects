@@ -1,4 +1,5 @@
 from fastai.torch_imports import *
+from fastai.conv_learner import *
 
 
 class ConvBlock(nn.Module):
@@ -80,3 +81,11 @@ class UnetBlock(nn.Module):
         x_p = self.x_conv(x_p)
         cat_p = torch.cat([up_p,x_p], dim=1)
         return self.bn(F.relu(cat_p))
+
+
+def get_pretrained_resnet_base(layers_cut:int= 0):
+    f = resnet34
+    cut,lr_cut = model_meta[f]
+    cut-=layers_cut
+    layers = cut_model(f(True), cut)
+    return nn.Sequential(*layers), lr_cut
