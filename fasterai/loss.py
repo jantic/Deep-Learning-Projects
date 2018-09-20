@@ -1,14 +1,6 @@
 
 from fastai.conv_learner import *
-
-class SaveFeatures():
-    features=None
-    def __init__(self, m): 
-        self.hook = m.register_forward_hook(self.hook_fn)
-    def hook_fn(self, module, input, output): 
-        self.features = output
-    def remove(self): 
-        self.hook.remove()
+from fasterai.modules import *
 
 
 class FeatureLoss(nn.Module):

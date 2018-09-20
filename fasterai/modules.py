@@ -89,3 +89,13 @@ def get_pretrained_resnet_base(layers_cut:int= 0):
     cut-=layers_cut
     layers = cut_model(f(True), cut)
     return nn.Sequential(*layers), lr_cut
+
+
+class SaveFeatures():
+    features=None
+    def __init__(self, m): 
+        self.hook = m.register_forward_hook(self.hook_fn)
+    def hook_fn(self, module, input, output): 
+        self.features = output
+    def remove(self): 
+        self.hook.remove()

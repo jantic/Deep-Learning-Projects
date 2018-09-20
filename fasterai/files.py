@@ -7,7 +7,6 @@ from itertools import repeat
 import re
 
 
-
 def generate_preprocess_path(source_path: Path, is_x:bool, uid: str):
     name = generate_preprocess_name(source_path, is_x, uid) 
     path = source_path.parent/name
