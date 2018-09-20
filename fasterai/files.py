@@ -63,6 +63,3 @@ def generate_comparable_path_info(root_path: Path):
 
 def convert_paths_to_str(paths: [Path]):
     return [str(path) for path in paths]
-
-def save_model(model, path): 
-    torch.save(model.state_dict(), path)
