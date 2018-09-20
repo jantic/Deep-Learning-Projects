@@ -67,6 +67,21 @@ class ResSequential(nn.Module):
     def forward(self, x): 
         return x + self.m(x) * self.res_scale
 
+class ResBlock(nn.Module):
+    def __init__(self, nf:int, res_scale=1.0):
+        super().__init__()
+        layers = []
+        nf_bottleneck = nf//4
+        self.res_scale = res_scale
+        layers.append(ConvBlock(nf, nf_bottleneck, ks=1))
+        layers.append(ConvBlock(nf_bottleneck, nf_bottleneck, ks=3))
+        layers.append(ConvBlock(nf_bottleneck, nf, ks=3, actn=False, bn=False))
+        self.mid = nn.Sequential(*layers)
+        self.relu = nn.LeakyReLU()
+        self.bn = nn.BatchNorm2d(nf) 
+    
+    def forward(self, x):
+        return self.bn(self.relu(self.mid(x)*self.res_scale+x))
 
 class UnetBlock(nn.Module):
     def __init__(self, up_in, x_in, n_out):
