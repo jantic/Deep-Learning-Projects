@@ -1,5 +1,6 @@
 from fasterai.modules import *
 from fasterai.visualize import *
+from fasterai.generators import *
 from torch import autograd
 from collections import Iterable
 from abc import ABC, abstractmethod
@@ -81,14 +82,6 @@ class WGANCriticTrainingResult():
         self.gpenalty=gpenalty
         self.dreal=dreal
         self.dfake=dfake
-
-class GeneratorModule(ABC, nn.Module):
-    def __init__(self):
-        super().__init__()
-    
-    @abstractmethod
-    def set_trainable(self, trainable: bool):
-        pass
 
 class WGANTrainer():
     def __init__(self, netD: nn.Module, netG: GeneratorModule, md: ImageData, bs:int, sz:int, dpath: Path, gpath: Path, lr:float=1e-4):
@@ -224,84 +217,3 @@ class WGANTrainer():
         gradients = gradients.view(gradients.size(0), -1)
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * lamda
         return gradient_penalty
-
-class ResnetImageModifier(GeneratorModule): 
-    def set_trainable(self, trainable: bool):
-        set_trainable(self, trainable)
-        set_trainable(self.rn, False)
-        
-    def __init__(self, nf:int=128):
-        super().__init__() 
-        
-        self.rn, _ = get_pretrained_resnet_base(1)
-        set_trainable(self.rn, False)
-        
-        self.color = nn.Sequential(
-            ResBlock(256),
-            ConvBlock(256, nf),
-            ResBlock(nf),
-            ConvBlock(nf, nf//4),
-            ResBlock(nf//4),
-            ConvBlock(nf//4, nf//16),
-            ResBlock(nf//16),
-            UpSampleBlock(nf//16, nf//16, 16),
-            ConvBlock(nf//16,3, actn=False, bn=False)
-        )
-        
-        self.out = nn.Sequential(
-            ConvBlock(6,3, actn=False, bn=False)
-        )
-        
-    def forward(self, orig): 
-        x = self.rn(orig)
-        x = self.color(x)
-        return F.tanh(self.out(torch.cat([orig, x], dim=1)))   
-
-
-class EDSRImageModifier(GeneratorModule):
-    def set_trainable(self, trainable: bool):
-        set_trainable(self, trainable)
-        set_trainable(self.rn, False)
-    
-    def __init__(self):
-        super().__init__() 
-        rn, lr_cut = get_pretrained_resnet_base()
-
-        self.rn = rn
-        set_trainable(rn, False)
-        self.lr_cut = lr_cut
-        self.sfs = [SaveFeatures(rn[i]) for i in [2,4,5,6]]
-        
-        self.up1 = UpSampleBlock(256, 256, 16)  #256 in
-        self.up2 = UpSampleBlock(128, 128, 8)  #128 in
-        self.up3 = UpSampleBlock(64, 64, 4)    #64 in
-        self.up4 = UpSampleBlock(64, 64, 2)   #64 in  
-        nf_up = 256+128+64+64+3
-        nf_mid = 256  
- 
-        mid_layers = []
-        mid_layers += [ConvBlock(nf_up,nf_mid, bn=True, actn=False)]
-        
-        for i in range(8): 
-            mid_layers.append(
-                ResSequential(
-                [ConvBlock(nf_mid, nf_mid, actn=True, bn=False), 
-                 ConvBlock(nf_mid, nf_mid, actn=False, bn=False)], 0.1)
-            )
-            
-        mid_layers += [ConvBlock(nf_mid,nf_mid, actn=False), 
-                       ConvBlock(nf_mid, 3, bn=False, actn=False)]
-        self.upconv = nn.Sequential(*mid_layers)
-             
-        out_layers = []
-        out_layers += [ConvBlock(6, 3, ks=1, bn=False, actn=False)]
-        self.out = nn.Sequential(*out_layers)
-        
-    def forward(self, x): 
-        self.rn(x)
-        x1 = self.up1(self.sfs[3].features)
-        x2 = self.up2(self.sfs[2].features)
-        x3 = self.up3(self.sfs[1].features)
-        x4 = self.up4(self.sfs[0].features) 
-        x5 = self.upconv(torch.cat([x, x1, x2, x3, x4], dim=1))
-        return F.tanh(self.out(torch.cat([x, x5], dim=1)))    
