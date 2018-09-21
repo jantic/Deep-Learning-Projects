@@ -13,6 +13,11 @@ class GeneratorModule(ABC, nn.Module):
     def get_layer_groups(self)->[]:
         pass
 
+    def freeze_to(self, n):
+        c=self.get_layer_groups()
+        for l in c:     set_trainable(l, False)
+        for l in c[n:]: set_trainable(l, True)
+
 class ResnetImageModifier(GeneratorModule): 
     def set_trainable(self, trainable: bool):
         set_trainable(self, trainable)

@@ -8,18 +8,19 @@ class CriticModule(ABC, nn.Module):
     def __init__(self):
         super().__init__()
     
-    @abstractmethod
+    def freeze_to(self, n):
+        c=self.get_layer_groups()
+        for l in c:     set_trainable(l, False)
+        for l in c[n:]: set_trainable(l, True)
+    
     def set_trainable(self, trainable: bool):
-        pass
+        set_trainable(self, trainable)
 
     @abstractmethod
     def get_layer_groups(self)->[]:
         pass
 
 class DCCritic(CriticModule):
-    def set_trainable(self, trainable: bool):
-        set_trainable(self, trainable)
-
     def __init__(self, ni:int, nf:int, sz:int):
         super().__init__()
 
@@ -50,10 +51,7 @@ class DCCritic(CriticModule):
         return self.out(x)
 
 
-class FeatureCritic(CriticModule):
-    def set_trainable(self, trainable: bool):
-        set_trainable(self, trainable)
-                
+class FeatureCritic(CriticModule):           
     def __init__(self, sz:int, nf:int=128):
         super().__init__()        
         self.rn, self.lr_cut = get_pretrained_resnet_base()
@@ -127,6 +125,14 @@ class WGANTrainer():
         for epoch in trange(epochs):
             gcount = self._train_one_epoch(gcount, first)
 
+    def _get_raw_noise_loss(self, orig_image: torch.Tensor):
+        noise_image = self._create_noise_batch()
+        return self.netD(noise_image, orig_image)
+
+    def _create_noise_batch(self): 
+        raw_random = V(torch.randn(self.bs, 3, self.sz,self.sz).normal_(0, 1))
+        return F.tanh(raw_random)
+
     def _generate_clr_sched(self, model, use_clr_beta: (int), lrs: [int], cycle_len: int):
         wds = 1e-7
         opt_fn = partial(optim.Adam, betas=(0., 0.9))
@@ -170,9 +176,16 @@ class WGANTrainer():
         real_image = V(y) 
         return (orig_image, real_image)
 
+    def _determine_abs_noise_loss(self, orig_image):
+        return abs(self._get_raw_noise_loss(orig_image))
+
+    def _normalize_loss(self, orig_image: torch.Tensor, loss: torch.Tensor):
+        abs_noise_loss = self._determine_abs_noise_loss(orig_image)
+        return (loss/abs_noise_loss)*10
+
     def _calculate_wdist(self, orig_image: torch.Tensor, real_image: torch.Tensor, fake_image: torch.Tensor)->torch.Tensor:
-        dreal = self.netD(real_image, orig_image)
-        dfake = self.netD(V(fake_image.data), orig_image)
+        dreal = self._get_dscore(real_image, orig_image)
+        dfake = self._get_dscore(V(fake_image.data), orig_image)
         wdist = dfake - dreal
         return wdist, dfake, dreal
 
@@ -188,14 +201,17 @@ class WGANTrainer():
             if orig_image is None:
                 return cresult
             j += 1
-            cresult = self._train_critic_once(orig_image, real_image)
+            #To help boost critic early on, we're doing both noise and generator based training, since
+            #the generator never actually starts by creating noise
+            #self._train_critic_once(orig_image, real_image, noise_gen=True)
+            cresult = self._train_critic_once(orig_image, real_image, noise_gen=False)
             pbar.update()
         
         return cresult
 
-    def _train_critic_once(self, orig_image: torch.Tensor, real_image: torch.Tensor)->WGANCriticTrainingResult:                     
+    def _train_critic_once(self, orig_image: torch.Tensor, real_image: torch.Tensor, noise_gen:bool= False)->WGANCriticTrainingResult:                     
         #Higher == Real
-        fake_image = self.netG(orig_image)
+        fake_image = self._create_noise_batch() if noise_gen else self.netG(orig_image)
         wdist, dfake, dreal = self._calculate_wdist(orig_image, real_image, fake_image)
         self.netD.zero_grad()        
         gpenalty = self._calc_gradient_penalty(real_image.data, fake_image.data, orig_image)              
@@ -221,7 +237,7 @@ class WGANTrainer():
         self.netG.set_trainable(True)
         self.netG.zero_grad()         
         fake_image = self.netG(orig_image)
-        gcost  = -self.netD(fake_image, orig_image)
+        gcost  = -self._get_dscore(fake_image, orig_image)
         gcost.backward()
         self.gen_sched.layer_opt.opt.step()
         self.critic_sched.on_batch_end(to_np(cresult.dcost))
@@ -237,20 +253,24 @@ class WGANTrainer():
                 f'; GCount: {gresult.gcount}; GPenalty: {cresult.gpenalty}; GCost: {gresult.gcost}')
 
         if gresult.gcount % 100 == 0:
-            visualize_image_gen_model(self.md, self.netG, 500, 8)
-            save_model(self.netD, self.dpath)
-            save_model(self.netG, self.gpath)
+            if gresult.gcount % 10 == 0:
+                visualize_image_gen_model(self.md, self.netG, 500, 8)
+                save_model(self.netD, self.dpath)
+                save_model(self.netG, self.gpath)
+
+    def _get_dscore(self, new_image: torch.Tensor, orig_image: torch.Tensor):
+        #return self._normalize_loss(orig_image, self.netD(new_image, orig_image))
+        return self.netD(new_image, orig_image)
 
     def _calc_gradient_penalty(self, real_data: torch.Tensor, fake_data: torch.Tensor, orig_data: torch.Tensor)->torch.Tensor:
         lamda = 10 # Gradient penalty lambda hyperparameter
         alpha = torch.rand(self.bs, 1)
         alpha = alpha.expand(self.bs, real_data.nelement()//self.bs).contiguous().view(self.bs, 3, self.sz, self.sz)
         alpha = alpha.cuda()
-        differences = fake_data - real_data
-        interpolates = real_data + (alpha*differences)
+        interpolates = alpha*real_data + (1-alpha)*fake_data
         interpolates = interpolates.cuda()
         interpolates = autograd.Variable(interpolates, requires_grad=True)
-        disc_interpolates = self.netD(interpolates, orig_data)
+        disc_interpolates = self._get_dscore(interpolates, orig_data)
         gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
             grad_outputs=torch.ones(disc_interpolates.size()).cuda(),
             create_graph=True, retain_graph=True, only_inputs=True)[0]
