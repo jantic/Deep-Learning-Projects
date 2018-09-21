@@ -16,13 +16,11 @@ class GeneratorModule(ABC, nn.Module):
 class ResnetImageModifier(GeneratorModule): 
     def set_trainable(self, trainable: bool):
         set_trainable(self, trainable)
-        set_trainable(self.rn, False)
         
     def __init__(self, nf:int=128):
         super().__init__() 
         
         self.rn, self.lr_cut = get_pretrained_resnet_base(1)
-        set_trainable(self.rn, False)
         
         self.color = nn.Sequential(
             ResBlock(256),
@@ -54,7 +52,6 @@ class ResnetImageModifier(GeneratorModule):
 class EDSRImageModifier(GeneratorModule):
     def set_trainable(self, trainable: bool):
         set_trainable(self, trainable)
-        set_trainable(self.rn, False)
     
     def __init__(self):
         super().__init__() 
@@ -105,7 +102,6 @@ class EDSRImageModifier(GeneratorModule):
 class Unet34(GeneratorModule):  
     def set_trainable(self, trainable: bool):
         set_trainable(self, trainable)
-        set_trainable(self.rn, False)
 
     def __init__(self, nf=256):
         super().__init__()

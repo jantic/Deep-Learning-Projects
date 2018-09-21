@@ -3,9 +3,23 @@ from fasterai.visualize import *
 from fasterai.generators import *
 from torch import autograd
 from collections import Iterable
-from abc import ABC, abstractmethod
 
-class DCCritic(nn.Module):
+class CriticModule(ABC, nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    @abstractmethod
+    def set_trainable(self, trainable: bool):
+        pass
+
+    @abstractmethod
+    def get_layer_groups(self)->[]:
+        pass
+
+class DCCritic(CriticModule):
+    def set_trainable(self, trainable: bool):
+        set_trainable(self, trainable)
+
     def __init__(self, ni:int, nf:int, sz:int):
         super().__init__()
 
@@ -26,6 +40,9 @@ class DCCritic(nn.Module):
         
         out_layers.append(nn.Conv2d(cndf, 1, csize, padding=0, bias=False))        
         self.out = nn.Sequential(*out_layers) 
+
+    def get_layer_groups(self)->[]:
+        return children(self)
     
     def forward(self, x):
         x=self.initial(x)
@@ -33,10 +50,9 @@ class DCCritic(nn.Module):
         return self.out(x)
 
 
-class FeatureCritic(nn.Module):
-    def set_trainable(self, trainable):
+class FeatureCritic(CriticModule):
+    def set_trainable(self, trainable: bool):
         set_trainable(self, trainable)
-        set_trainable(self.rn, False)
                 
     def __init__(self, sz:int, nf:int=128):
         super().__init__()        
@@ -71,49 +87,68 @@ class FeatureCritic(nn.Module):
         p = self.pixel_eval(torch.cat([orig, input], dim=1))
         return f1.mean() + f2.mean() + f3.mean()  + f4.mean() + p.mean()
 
+    def get_layer_groups(self)->[]:
+        lgs = list(split_by_idxs(children(self.rn), [self.lr_cut]))
+        return lgs + [children(self)[1:]]
+
 class WGANGenTrainingResult():
     def __init__(self, gcost: np.array, gcount: int):
         self.gcost=gcost
         self.gcount=gcount
 
 class WGANCriticTrainingResult():
-    def __init__(self, wdist: np.array, gpenalty: np.array, dreal: np.array, dfake: np.array):
+    def __init__(self, wdist: np.array, gpenalty: np.array, dreal: np.array, dfake: np.array, dcost: np.array):
         self.wdist=wdist
         self.gpenalty=gpenalty
         self.dreal=dreal
         self.dfake=dfake
+        self.dcost=dcost
 
 class WGANTrainer():
-    def __init__(self, netD: nn.Module, netG: GeneratorModule, md: ImageData, bs:int, sz:int, dpath: Path, gpath: Path, lr:float=1e-4):
+    def __init__(self, netD: nn.Module, netG: GeneratorModule, md: ImageData, bs:int, sz:int, dpath: Path, gpath: Path):
         self.netD = netD
         self.netG = netG
         self.md = md
         self.bs = bs
         self.sz = sz
-        self.lr = lr
         self.dpath = dpath
         self.gpath = gpath
-        self.optimizerD = optim.Adam(filter(lambda p: p.requires_grad,netD.parameters()), lr=lr, betas=(0., 0.9))
-        self.optimizerG = optim.Adam(filter(lambda p: p.requires_grad,netG.parameters()), lr=lr, betas=(0., 0.9))
 
-    def train(self, niter: int=1, first_epoch=True):
+    def train(self, lrs_critic:[int], lrs_gen:[int], clr_critic: (int)=(20,10), clr_gen: (int)=(20,10), 
+            cycle_len:int =1, epochs: int=1, first:bool=True):
+
+        self.gen_sched = self._generate_clr_sched(self.netG, clr_gen, lrs_gen, cycle_len)
+        self.critic_sched = self._generate_clr_sched(self.netD, clr_critic, lrs_critic, cycle_len)
+
         gcount = 0
-        for epoch in trange(niter):
-            gcount = self._train_one_epoch(gcount, first_epoch)
+        self.critic_sched.on_train_begin()
+        self.gen_sched.on_train_begin()
+
+        for epoch in trange(epochs):
+            gcount = self._train_one_epoch(gcount, first)
+
+    def _generate_clr_sched(self, model, use_clr_beta: (int), lrs: [int], cycle_len: int):
+        wds = 1e-7
+        opt_fn = partial(optim.Adam, betas=(0., 0.9))
+        layer_opt = LayerOptimizer(opt_fn, model.get_layer_groups(), lrs, wds)
+        div,pct = use_clr_beta[:2]
+        moms = use_clr_beta[2:] if len(use_clr_beta) > 3 else None
+        cycle_end =  None
+        return CircularLR_beta(layer_opt, len(self.md.trn_dl)*cycle_len, on_cycle_end=cycle_end, div=div, pct=pct, momentums=moms)
     
-    def _train_one_epoch(self, gcount: int, first_epoch: bool)->int:
+    def _train_one_epoch(self, gcount: int, first: bool)->int:
         self.netD.train()
         self.netG.train()
         data_iter = iter(self.md.trn_dl)
         n = len(self.md.trn_dl)
         with tqdm(total=n) as pbar:
             while True:
-                cresult = self._train_critic(first_epoch, gcount, data_iter, pbar)
+                cresult = self._train_critic(first, gcount, data_iter, pbar)
                 
                 if cresult is None:
                     break
 
-                gresult = self._train_generator(gcount, data_iter, pbar)
+                gresult = self._train_generator(gcount, data_iter, pbar, cresult)
                 gcount = gresult.gcount
 
                 if gresult is None:
@@ -124,8 +159,8 @@ class WGANTrainer():
         return gcount
 
 
-    def _get_num_critic_iters(self, first_epoch: bool, gcount: int)->int:
-        return 100 if (first_epoch and (gcount < 25) or (gcount % 500 == 0)) else 5
+    def _get_num_critic_iters(self, first: bool, gcount: int)->int:
+        return 100 if (first and (gcount < 25) or (gcount % 500 == 0)) else 5
 
     def _get_next_training_images(self, data_iter: Iterable)->(torch.Tensor,torch.Tensor):
         x, y = next(data_iter, (None, None))
@@ -141,11 +176,11 @@ class WGANTrainer():
         wdist = dfake - dreal
         return wdist, dfake, dreal
 
-    def _train_critic(self, first_epoch: bool, gcount: int, data_iter: Iterable, pbar: tqdm)->WGANCriticTrainingResult:
+    def _train_critic(self, first: bool, gcount: int, data_iter: Iterable, pbar: tqdm)->WGANCriticTrainingResult:
         self.netD.set_trainable(True)
         self.netG.set_trainable(False)
         j = 0
-        d_iters = self._get_num_critic_iters(first_epoch, gcount)
+        d_iters = self._get_num_critic_iters(first, gcount)
         cresult=None
 
         while (j<d_iters):
@@ -164,28 +199,33 @@ class WGANTrainer():
         wdist, dfake, dreal = self._calculate_wdist(orig_image, real_image, fake_image)
         self.netD.zero_grad()        
         gpenalty = self._calc_gradient_penalty(real_image.data, fake_image.data, orig_image)              
-        disc_cost = dfake - dreal + gpenalty
-        disc_cost.backward()
-        self.optimizerD.step()
-        return WGANCriticTrainingResult(to_np(wdist), to_np(gpenalty), to_np(dreal), to_np(dfake))
+        dcost = dfake - dreal + gpenalty
+        dcost.backward()
+        self.critic_sched.layer_opt.opt.step()
+        self.critic_sched.on_batch_end(to_np(dcost))
+        self.gen_sched.on_batch_end(to_np(-dfake))
+        return WGANCriticTrainingResult(to_np(wdist), to_np(gpenalty), to_np(dreal), to_np(dfake), to_np(dcost))
     
-    def _train_generator(self, gcount: int, data_iter: Iterable, pbar: tqdm)->WGANGenTrainingResult:
+    def _train_generator(self, gcount: int, data_iter: Iterable, pbar: tqdm, cresult: WGANCriticTrainingResult)->WGANGenTrainingResult:
         orig_image, real_image = self._get_next_training_images(data_iter)   
         if orig_image is None:
             return None
         gcount += 1   
-        gresult = self._train_generator_once(orig_image, real_image, gcount)       
+        gresult = self._train_generator_once(orig_image, real_image, gcount, cresult)       
         pbar.update() 
         return gresult
 
-    def _train_generator_once(self, orig_image: torch.Tensor, real_image: torch.Tensor, gcount: int)->WGANGenTrainingResult:
+    def _train_generator_once(self, orig_image: torch.Tensor, real_image: torch.Tensor, 
+            gcount: int, cresult: WGANCriticTrainingResult)->WGANGenTrainingResult:
         self.netD.set_trainable(False)
         self.netG.set_trainable(True)
         self.netG.zero_grad()         
         fake_image = self.netG(orig_image)
         gcost  = -self.netD(fake_image, orig_image)
         gcost.backward()
-        self.optimizerG.step()
+        self.gen_sched.layer_opt.opt.step()
+        self.critic_sched.on_batch_end(to_np(cresult.dcost))
+        self.gen_sched.on_batch_end(to_np(gcost))
         return WGANGenTrainingResult(to_np(gcost), gcount)
 
     def _progress_update(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
