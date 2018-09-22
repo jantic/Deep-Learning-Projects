@@ -5,6 +5,7 @@ import torch
 from pathlib import Path
 from itertools import repeat
 import re
+import os
 
 
 def generate_preprocess_path(source_path: Path, is_x:bool, uid: str):
@@ -62,3 +63,8 @@ def generate_comparable_path_info(root_path: Path):
 
 def convert_paths_to_str(paths: [Path]):
     return [str(path) for path in paths]
+
+
+def clear_directory(dir: Path):
+    for f in dir.glob('*'):
+        os.remove(f)

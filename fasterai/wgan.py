@@ -1,8 +1,8 @@
 from fasterai.modules import *
-from fasterai.visualize import *
 from fasterai.generators import *
 from torch import autograd
 from collections import Iterable
+import torch.utils.hooks as hooks
 
 class CriticModule(ABC, nn.Module):
     def __init__(self):
@@ -111,6 +111,12 @@ class WGANTrainer():
         self.sz = sz
         self.dpath = dpath
         self.gpath = gpath
+        self._train_loop_hooks = OrderedDict()
+
+    def register_train_loop_hook(self, hook):
+        handle = hooks.RemovableHandle(self._train_loop_hooks)
+        self._train_loop_hooks[handle.id] = hook
+        return handle
 
     def train(self, lrs_critic:[int], lrs_gen:[int], clr_critic: (int)=(20,10), clr_gen: (int)=(20,10), 
             cycle_len:int =1, epochs: int=1, first:bool=True):
@@ -160,10 +166,18 @@ class WGANTrainer():
                 if gresult is None:
                     break
 
-                self._progress_update(gresult, cresult)
+                self._save_if_applicable(gresult, cresult)
+                self._call_train_loop_hooks(gresult, cresult)
         
         return gcount
 
+    def _call_train_loop_hooks(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
+        for hook in self._train_loop_hooks.values():
+            hook_result = hook(self, gresult, cresult)
+            if hook_result is not None:
+                raise RuntimeError(
+                    "train loop hooks hooks should never return any values, but '{}'"
+                    "didn't return None".format(hook))
 
     def _get_num_critic_iters(self, first: bool, gcount: int)->int:
         return 100 if (first and (gcount < 25) or (gcount % 500 == 0)) else 5
@@ -189,14 +203,23 @@ class WGANTrainer():
         wdist = dfake - dreal
         return wdist, dfake, dreal
 
+    def _is_equilibrium(self, cresult: WGANCriticTrainingResult):
+        dreal  = cresult.dreal
+        dfake = cresult.dfake
+
+        if dreal < dfake:
+            return False
+        return abs(dreal + dfake) < (abs(dreal) + abs(dfake))*0.30
+
     def _train_critic(self, first: bool, gcount: int, data_iter: Iterable, pbar: tqdm)->WGANCriticTrainingResult:
         self.netD.set_trainable(True)
         self.netG.set_trainable(False)
         j = 0
-        d_iters = self._get_num_critic_iters(first, gcount)
+        #d_iters = self._get_num_critic_iters(first, gcount)
         cresult=None
+        equilibrium = False
 
-        while (j<d_iters):
+        while not equilibrium:
             orig_image, real_image = self._get_next_training_images(data_iter)
             if orig_image is None:
                 return cresult
@@ -206,6 +229,7 @@ class WGANTrainer():
             #self._train_critic_once(orig_image, real_image, noise_gen=True)
             cresult = self._train_critic_once(orig_image, real_image, noise_gen=False)
             pbar.update()
+            equilibrium = self._is_equilibrium(cresult)
         
         return cresult
 
@@ -244,19 +268,13 @@ class WGANTrainer():
         self.gen_sched.on_batch_end(to_np(gcost))
         return WGANGenTrainingResult(to_np(gcost), gcount)
 
-    def _progress_update(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
+    def _save_if_applicable(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
         if cresult is None or gresult is None:
             return
 
-        if gresult.gcount % 10 == 0:
-            print(f'\nWDist {cresult.wdist}; RScore {cresult.dreal}; FScore {cresult.dfake}' + 
-                f'; GCount: {gresult.gcount}; GPenalty: {cresult.gpenalty}; GCost: {gresult.gcost}')
-
         if gresult.gcount % 100 == 0:
-            if gresult.gcount % 10 == 0:
-                visualize_image_gen_model(self.md, self.netG, 500, 8)
-                save_model(self.netD, self.dpath)
-                save_model(self.netG, self.gpath)
+            save_model(self.netD, self.dpath)
+            save_model(self.netG, self.gpath)
 
     def _get_dscore(self, new_image: torch.Tensor, orig_image: torch.Tensor):
         #return self._normalize_loss(orig_image, self.netD(new_image, orig_image))

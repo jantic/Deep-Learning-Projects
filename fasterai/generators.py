@@ -5,9 +5,8 @@ class GeneratorModule(ABC, nn.Module):
     def __init__(self):
         super().__init__()
     
-    @abstractmethod
     def set_trainable(self, trainable: bool):
-        pass
+        set_trainable(self, trainable)
 
     @abstractmethod
     def get_layer_groups(self)->[]:
@@ -18,10 +17,7 @@ class GeneratorModule(ABC, nn.Module):
         for l in c:     set_trainable(l, False)
         for l in c[n:]: set_trainable(l, True)
 
-class ResnetImageModifier(GeneratorModule): 
-    def set_trainable(self, trainable: bool):
-        set_trainable(self, trainable)
-        
+class ResnetImageModifier(GeneratorModule):     
     def __init__(self, nf:int=128):
         super().__init__() 
         
@@ -55,9 +51,6 @@ class ResnetImageModifier(GeneratorModule):
 
 
 class EDSRImageModifier(GeneratorModule):
-    def set_trainable(self, trainable: bool):
-        set_trainable(self, trainable)
-    
     def __init__(self):
         super().__init__() 
         rn, lr_cut = get_pretrained_resnet_base()
@@ -105,9 +98,6 @@ class EDSRImageModifier(GeneratorModule):
         return F.tanh(self.out(torch.cat([x, x5], dim=1)))    
 
 class Unet34(GeneratorModule):  
-    def set_trainable(self, trainable: bool):
-        set_trainable(self, trainable)
-
     def __init__(self, nf=256):
         super().__init__()
         self.rn, self.lr_cut = get_pretrained_resnet_base()
