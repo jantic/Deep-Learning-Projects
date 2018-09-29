@@ -18,6 +18,29 @@ class ConvBlock(nn.Module):
     def forward(self, x):
         return self.seq(x)
 
+
+class MeanPoolConv(nn.Module):
+    def __init__(self, ni, no):
+        super(MeanPoolConv, self).__init__()
+        self.conv = ConvBlock(ni, no, pad=0, ks=1, bn=False)
+
+    def forward(self, input):
+        output = input
+        output = (output[:,:,::2,::2] + output[:,:,1::2,::2] + output[:,:,::2,1::2] + output[:,:,1::2,1::2]) / 4
+        output = self.conv(output)
+        return output
+
+class ConvPoolMean(nn.Module):
+    def __init__(self, ni, no, ks:int=3):
+        super(ConvPoolMean, self).__init__()
+        self.conv = ConvBlock(ni, no, ks=ks, bn=False)
+
+    def forward(self, input):
+        output = input
+        output = self.conv(output)
+        output = (output[:,:,::2,::2] + output[:,:,1::2,::2] + output[:,:,::2,1::2] + output[:,:,1::2,1::2]) / 4
+        return output
+
 class UpSampleBlock(nn.Module):
     @staticmethod
     def _conv(ni: int, nf: int):
@@ -42,9 +65,14 @@ class UpSampleBlock(nn.Module):
     def __init__(self, ni: int, nf: int, scale=2):
         super().__init__()
         layers = []
+
+        assert (math.log(scale,2)).is_integer()
+
+        layers += [UpSampleBlock._conv(ni, nf*4), 
+            nn.PixelShuffle(2)]
         
-        for i in range(int(math.log(scale,2))):
-            layers += [UpSampleBlock._conv(ni, nf*4), 
+        for i in range(int(math.log(scale//2,2))):
+            layers += [UpSampleBlock._conv(nf, nf*4), 
                        nn.PixelShuffle(2)]
                        
         self.sequence = nn.Sequential(*layers)
@@ -68,20 +96,45 @@ class ResSequential(nn.Module):
         return x + self.m(x) * self.res_scale
 
 class ResBlock(nn.Module):
-    def __init__(self, nf:int, res_scale=1.0):
+    def __init__(self, nf:int, ks:int=3, res_scale:float=1.0, dropout:float=0.5, bn:bool=True):
         super().__init__()
         layers = []
         nf_bottleneck = nf//4
         self.res_scale = res_scale
-        layers.append(ConvBlock(nf, nf_bottleneck, ks=1))
-        layers.append(ConvBlock(nf_bottleneck, nf_bottleneck, ks=3))
-        layers.append(ConvBlock(nf_bottleneck, nf, ks=3, actn=False, bn=False))
+        self.bn = bn
+        layers.append(ConvBlock(nf, nf_bottleneck, ks=ks, bn=bn))
+        layers.append(nn.Dropout2d(dropout))
+        layers.append(ConvBlock(nf_bottleneck, nf, ks=ks, actn=False, bn=False))
         self.mid = nn.Sequential(*layers)
         self.relu = nn.LeakyReLU()
-        self.bn = nn.BatchNorm2d(nf) 
+        self.norm = nn.BatchNorm2d(nf) 
     
     def forward(self, x):
-        return self.bn(self.relu(self.mid(x)*self.res_scale+x))
+        x = self.mid(x)*self.res_scale+x
+        x = self.relu(x)
+        x = self.norm(x) if self.bn else x
+        return x
+
+class DownSampleResBlock(nn.Module):
+    def __init__(self, ni: int, nf:int, res_scale:float=1.0, dropout:float=0.5, bn:bool=True):
+        super().__init__()
+        self.bn = bn
+        self.res_scale = res_scale
+        layers = []
+        layers.append(ConvBlock(ni, nf, ks=4, bn=bn, stride=2))
+        layers.append(nn.LeakyReLU())
+        layers.append(nn.Dropout2d(dropout))
+
+        self.mid = nn.Sequential(*layers)
+        self.mid_shortcut = MeanPoolConv(ni, nf)
+        self.relu = nn.LeakyReLU()
+        self.norm = nn.BatchNorm2d(nf) 
+    
+    def forward(self, x):
+        x = self.mid(x)*self.res_scale + self.mid_shortcut(x)*self.res_scale
+        x = self.relu(x)
+        x = norm(x) if self.bn else x
+        return x
 
 class UnetBlock(nn.Module):
     def __init__(self, up_in, x_in, n_out):

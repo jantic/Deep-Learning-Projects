@@ -51,7 +51,7 @@ class ResnetImageModifier(GeneratorModule):
 
 
 class EDSRImageModifier(GeneratorModule):
-    def __init__(self):
+    def __init__(self, nf=32):
         super().__init__() 
         rn, lr_cut = get_pretrained_resnet_base()
 
@@ -60,24 +60,23 @@ class EDSRImageModifier(GeneratorModule):
         self.lr_cut = lr_cut
         self.sfs = [SaveFeatures(rn[i]) for i in [2,4,5,6]]
         
-        self.up1 = UpSampleBlock(256, 256, 16)  #256 in
-        self.up2 = UpSampleBlock(128, 128, 8)  #128 in
-        self.up3 = UpSampleBlock(64, 64, 4)    #64 in
-        self.up4 = UpSampleBlock(64, 64, 2)   #64 in  
-        nf_up = 256+128+64+64+3
-        nf_mid = 256  
+        self.up1 = UpSampleBlock(256, nf, 16)  #256 in
+        self.up2 = UpSampleBlock(128, nf, 8)  #128 in
+        self.up3 = UpSampleBlock(64, nf, 4)    #64 in
+        self.up4 = UpSampleBlock(64, nf, 2)   #64 in  
+        nf_up = nf*4+3
  
         mid_layers = []
-        mid_layers += [ConvBlock(nf_up,nf_mid, bn=True, actn=False)]
+        mid_layers += [ConvBlock(nf_up,nf, bn=True, actn=False)]
         
         for i in range(8): 
             mid_layers.append(
                 ResSequential(
-                [ConvBlock(nf_mid, nf_mid, actn=True, bn=False), 
-                 ConvBlock(nf_mid, nf_mid, actn=False, bn=False)], 0.1)
+                [ConvBlock(nf, nf, actn=True, bn=False), 
+                 ConvBlock(nf, nf, actn=False, bn=False)], 0.1)
             )
             
-        mid_layers += [nn.BatchNorm2d(nf_mid), ConvBlock(nf_mid, 3, bn=False, actn=False)]
+        mid_layers += [nn.BatchNorm2d(nf), ConvBlock(nf, 3, bn=False, actn=False)]
         self.upconv = nn.Sequential(*mid_layers)
              
         out_layers = []
@@ -96,6 +95,31 @@ class EDSRImageModifier(GeneratorModule):
         x4 = self.up4(self.sfs[0].features) 
         x5 = self.upconv(torch.cat([x, x1, x2, x3, x4], dim=1))
         return F.tanh(self.out(torch.cat([x, x5], dim=1)))    
+
+
+class MinimalEDSRImageModifier(GeneratorModule):
+    def __init__(self, nf=128):
+        super().__init__() 
+
+        layers = []
+        layers += [ConvBlock(3,nf, bn=True, actn=False)]
+        
+        for i in range(10): 
+            layers.append(
+                ResSequential(
+                [ConvBlock(nf, nf, actn=True, bn=False), 
+                 ConvBlock(nf, nf, actn=False, bn=False)], 0.1)
+            )
+            
+        layers += [nn.BatchNorm2d(nf), ConvBlock(nf, 3, bn=False, actn=False)]
+        layers += [ConvBlock(3, 3, bn=False, actn=False)]
+        self.out = nn.Sequential(*layers)
+
+    def get_layer_groups(self)->[]:
+        return children(self)
+        
+    def forward(self, x): 
+        return F.tanh(self.out(x))   
 
 class Unet34(GeneratorModule):  
     def __init__(self, nf=256):
