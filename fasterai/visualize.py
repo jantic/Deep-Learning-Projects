@@ -149,10 +149,11 @@ class WganTrainerStatsVisualizer():
         self.tbwriter.add_scalar('/loss/gcost', gresult.gcost, self.iter_count)
         self.tbwriter.add_scalar('/loss/gcount', gresult.gcount, self.iter_count)
         self.tbwriter.add_scalar('/loss/conpenalty', cresult.conpenalty, self.iter_count)
+        self.tbwriter.add_scalar('/loss/gaddlloss', gresult.gaddlloss, self.iter_count)
 
     def _print_stats_in_jupyter(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
-        print(f'\nWDist {cresult.wdist}; RScore {cresult.dreal}; FScore {cresult.dfake}' + 
-                f'; GCount: {gresult.gcount}; GPenalty: {cresult.gpenalty}; GCost: {gresult.gcost}; ConPenalty: {cresult.conpenalty}')
+        print(f'\nWDist {cresult.wdist}; RScore {cresult.dreal}; FScore {cresult.dfake}; GAddlLoss {gresult.gaddlloss}; ' + 
+                f'GCount: {gresult.gcount}; GPenalty: {cresult.gpenalty}; GCost: {gresult.gcost}; ConPenalty: {cresult.conpenalty}')
 
     def _show_images_in_jupyter(self, trainer: WGANTrainer):
         md = trainer.md

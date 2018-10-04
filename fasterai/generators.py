@@ -119,16 +119,16 @@ class Unet34(GeneratorModule):
         self.up3 = UnetBlock(256*nf_factor,64,128*nf_factor)
         self.up4 = UnetBlock(128*nf_factor,64,64*nf_factor)
         self.up5 = UpSampleBlock(64*nf_factor, 32*nf_factor, 2)    
-        self.out= nn.Sequential(ConvBlock(32*nf_factor, 3, ks=3, actn=False, bn=False), nn.Tanh())
+        self.out= nn.Sequential(ConvBlock(32*nf_factor+3, 3, ks=3, actn=False, bn=False), nn.Tanh())
            
-    def forward(self, x: torch.Tensor):
-        x = F.leaky_relu(self.rn(x))
+    def forward(self, x_in: torch.Tensor):
+        x = F.leaky_relu(self.rn(x_in))
         x = self.up1(x, self.sfs[3].features)
         x = self.up2(x, self.sfs[2].features)
         x = self.up3(x, self.sfs[1].features)
         x = self.up4(x, self.sfs[0].features)
         x = self.up5(x)
-        x = self.out(x)
+        x = self.out(torch.cat([x, x_in], dim=1))
         return x
     
     def get_layer_groups(self, precompute: bool = False)->[]:

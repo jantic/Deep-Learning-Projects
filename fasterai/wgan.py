@@ -1,5 +1,6 @@
 from fasterai.modules import *
 from fasterai.generators import *
+from fasterai.loss import *
 from torch import autograd
 from collections import Iterable
 import torch.utils.hooks as hooks
@@ -143,9 +144,10 @@ class DCCritic(CriticModule):
         return self.out(x)
 
 class WGANGenTrainingResult():
-    def __init__(self, gcost: np.array, gcount: int):
+    def __init__(self, gcost: np.array, gcount: int, gaddlloss: np.array):
         self.gcost=gcost
         self.gcount=gcount
+        self.gaddlloss=gaddlloss
 
 class WGANCriticTrainingResult():
     def __init__(self, wdist: np.array, gpenalty: np.array, dreal: np.array, dfake: np.array, dcost: np.array, conpenalty: np.array):
@@ -158,7 +160,8 @@ class WGANCriticTrainingResult():
 
 class WGANTrainer():
     def __init__(self, netD: nn.Module, netG: GeneratorModule, md: ImageData, 
-            bs:int, sz:int, dpath: Path, gpath: Path, gplambda=10, citers=5):
+            bs:int, sz:int, dpath: Path, gpath: Path, gplambda=10, citers=1, 
+            save_iters=5000, genloss_fns:[]=[PerceptualLoss(100)]):
         self.netD = netD
         self.netG = netG
         self.md = md
@@ -169,6 +172,8 @@ class WGANTrainer():
         self.gplambda = gplambda
         self.citers = citers
         self._train_loop_hooks = OrderedDict()
+        self.genloss_fns = genloss_fns
+        self.save_iters=save_iters
 
     def register_train_loop_hook(self, hook):
         handle = hooks.RemovableHandle(self._train_loop_hooks)
@@ -289,7 +294,7 @@ class WGANTrainer():
         wdist, dfake, dreal = self._calculate_wdist(orig_image, real_image, fake_image)
         self.netD.zero_grad()        
         gpenalty = self._calc_gradient_penalty(real_image.data, fake_image.data, orig_image)     
-        conpenalty = self._consistency_penalty(real_image.data, orig_image)          
+        conpenalty = self._consistency_penalty(real_image.data, orig_image)      
         dcost = dfake - dreal + gpenalty + conpenalty
         dcost.backward()
         self.critic_sched.layer_opt.opt.step()
@@ -313,17 +318,19 @@ class WGANTrainer():
         self.netG.zero_grad()         
         fake_image = self.netG(orig_image)
         gcost = -self._get_dscore(fake_image, orig_image)
-        gcost.backward()
+        gaddlloss = self._calc_addl_gen_loss(real_image, fake_image) 
+        total_loss = gcost if gaddlloss is None else gcost + gaddlloss
+        total_loss.backward()
         self.gen_sched.layer_opt.opt.step()
         self.critic_sched.on_batch_end(to_np(cresult.dcost))
         self.gen_sched.on_batch_end(to_np(gcost))
-        return WGANGenTrainingResult(to_np(gcost), gcount)
+        return WGANGenTrainingResult(to_np(gcost), gcount, to_np(gaddlloss))
 
     def _save_if_applicable(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
         if cresult is None or gresult is None:
             return
 
-        if gresult.gcount % 10 == 0:
+        if gresult.gcount % self.save_iters == 0:
             save_model(self.netD, self.dpath)
             save_model(self.netG, self.gpath)
 
@@ -331,6 +338,14 @@ class WGANTrainer():
         #return self._normalize_loss(orig_image, self.netD(new_image, orig_image))
         final, _ = self.netD(new_image, orig_image)
         return final.mean()
+
+    def _calc_addl_gen_loss(self, real_data: torch.Tensor, fake_data: torch.Tensor)->torch.Tensor:
+        total_loss = None
+        for loss_fn in self.genloss_fns:
+            loss = loss_fn(fake_data, real_data)
+            total_loss = loss if total_loss is None else total_loss + loss
+        return total_loss
+
 
     def _calc_gradient_penalty(self, real_data: torch.Tensor, fake_data: torch.Tensor, orig_data: torch.Tensor)->torch.Tensor:
         alpha = torch.rand(self.bs, 1)
