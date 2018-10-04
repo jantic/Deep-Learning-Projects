@@ -172,4 +172,80 @@ class WganTrainerStatsVisualizer():
         self.hook.remove()
 
 
+class ImageGenLearnerVisualizerCB(Callback):
+    def __init__(self, base_dir: Path, model: nn.Module,  md: ImageData, name: str, stats_iters: int=25, visual_iters: int=250):
+        super().__init__()
+        self.base_dir = base_dir
+        self.name = name
+        log_dir = base_dir/name
+        clear_directory(log_dir) 
+        self.tbwriter = SummaryWriter(log_dir=str(log_dir))
+        self.stats_iters = stats_iters
+        self.visual_iters = visual_iters
+        self.iter_count = 0
+        self.model = model
+        self.md = md
+
+    def on_train_begin(self):
+        return
+
+    def on_batch_begin(self):
+        return
+        
+    def on_phase_begin(self):
+        return
+
+    def on_epoch_end(self, metrics):
+        self._write_tensorboard_stats(metrics) 
+        self._show_images_in_jupyter()
+
+    def on_phase_end(self):
+        return
+
+    def on_batch_end(self, metrics):
+        self.iter_count += 1
+        if self.iter_count % self.stats_iters != 0:
+            return
+
+        self._write_tensorboard_stats(metrics) 
+
+        if self.iter_count % self.visual_iters != 0:
+            return
+
+        self._show_images_in_jupyter()
+
+    def on_train_end(self):
+        return
+
+    def _write_tensorboard_stats(self, metrics):
+        if isinstance(metrics, list):
+            self.tbwriter.add_scalar('/loss/trn_loss', metrics[0], self.iter_count)    
+            if len(metrics) == 1: return
+            self.tbwriter.add_scalar('/loss/val_loss', metrics[1], self.iter_count)        
+            if len(metrics) == 2: return
+
+            for metric in metrics[2:]:
+                name = metric.__name__
+                self.tbwriter.add_scalar('/loss/'+name, metric, self.iter_count)
+                    
+        else: 
+            self.tbwriter.add_scalar('/loss/trn_loss', metrics, self.iter_count)
+
+
+    def _show_images_in_jupyter(self):
+        #TODO:  Parameterize these
+        start_idx=0
+        count = 8
+        figsize=(20,20)
+        max_columns=4
+        immediate_display=True
+        end_index = start_idx + count
+        idxs = list(range(start_idx,end_index))
+        plot_image_outputs_from_model(ds=self.md.val_ds, model=self.model, idxs=idxs, max_columns=max_columns, 
+            immediate_display=immediate_display)
+    
+    def close(self):
+        self.tbwriter.close()
+
+
 

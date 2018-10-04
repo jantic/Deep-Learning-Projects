@@ -1,13 +1,14 @@
 from fastai.torch_imports import *
 from fastai.conv_learner import *
+from torch.nn.utils.spectral_norm import spectral_norm
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, ni, no, ks=3, stride=1, bn=True, pad=None, actn=True):
+    def __init__(self, ni:int, no:int, ks:int=3, stride:int=1, pad:int=None, actn:bool=True, bn:bool=True, bias:bool=True):
         super().__init__()   
         if pad is None: pad = ks//2//stride
 
-        layers = [nn.Conv2d(ni, no, ks, stride, padding=pad)]
+        layers = [spectral_norm(nn.Conv2d(ni, no, ks, stride, padding=pad, bias=bias))]
         if actn:
             layers.append(nn.LeakyReLU())
         if bn:
@@ -17,7 +18,6 @@ class ConvBlock(nn.Module):
 
     def forward(self, x):
         return self.seq(x)
-
 
 class MeanPoolConv(nn.Module):
     def __init__(self, ni, no):
@@ -43,13 +43,14 @@ class ConvPoolMean(nn.Module):
 
 class UpSampleBlock(nn.Module):
     @staticmethod
-    def _conv(ni: int, nf: int):
-        kernel_size = 3
-        layers = [nn.Conv2d(ni, nf, kernel_size, padding=kernel_size//2, stride=1)]
+    def _conv(ni: int, nf: int, ks: int=3):
+        stride=1
+        pad=ks//2//stride
+        layers = [spectral_norm(nn.Conv2d(ni, nf, kernel_size=ks, padding=pad, stride=stride))]
         return nn.Sequential(*layers)
 
     @staticmethod
-    def _icnr(x:torch.Tensor, scale:int =2, init=nn.init.kaiming_normal):
+    def _icnr(x:torch.Tensor, scale:int =2, init=nn.init.kaiming_normal_):
         new_shape = [int(x.shape[0] / (scale ** 2))] + list(x.shape[1:])
         subkernel = torch.zeros(new_shape)
         subkernel = init(subkernel)
@@ -62,18 +63,23 @@ class UpSampleBlock(nn.Module):
         kernel = kernel.transpose(0, 1)
         return kernel
 
-    def __init__(self, ni: int, nf: int, scale=2):
+    def __init__(self, ni:int, nf:int, scale:int=2, ks:int=3, bn:bool=True):
         super().__init__()
         layers = []
 
         assert (math.log(scale,2)).is_integer()
 
-        layers += [UpSampleBlock._conv(ni, nf*4), 
+        layers += [UpSampleBlock._conv(ni, nf*4, ks=ks), 
             nn.PixelShuffle(2)]
+
+        if bn:
+            layers += [nn.BatchNorm2d(nf)]
         
         for i in range(int(math.log(scale//2,2))):
-            layers += [UpSampleBlock._conv(nf, nf*4), 
-                       nn.PixelShuffle(2)]
+            layers += [UpSampleBlock._conv(nf, nf*4,ks=ks), 
+                nn.PixelShuffle(2)]
+            if bn:
+                layers += [nn.BatchNorm2d(nf)]
                        
         self.sequence = nn.Sequential(*layers)
         self._icnr_init()
@@ -86,8 +92,9 @@ class UpSampleBlock(nn.Module):
     def forward(self, x):
         return self.sequence(x)
 
+
 class ResSequential(nn.Module):
-    def __init__(self, layers, res_scale=1.0):
+    def __init__(self, layers:[], res_scale:float=1.0):
         super().__init__()
         self.res_scale = res_scale
         self.m = nn.Sequential(*layers)
@@ -101,55 +108,68 @@ class ResBlock(nn.Module):
         layers = []
         nf_bottleneck = nf//4
         self.res_scale = res_scale
-        self.bn = bn
         layers.append(ConvBlock(nf, nf_bottleneck, ks=ks, bn=bn))
         layers.append(nn.Dropout2d(dropout))
         layers.append(ConvBlock(nf_bottleneck, nf, ks=ks, actn=False, bn=False))
         self.mid = nn.Sequential(*layers)
         self.relu = nn.LeakyReLU()
-        self.norm = nn.BatchNorm2d(nf) 
     
     def forward(self, x):
         x = self.mid(x)*self.res_scale+x
         x = self.relu(x)
-        x = self.norm(x) if self.bn else x
         return x
 
+
 class DownSampleResBlock(nn.Module):
-    def __init__(self, ni: int, nf:int, res_scale:float=1.0, dropout:float=0.5, bn:bool=True):
+    def __init__(self, ni:int, nf:int, res_scale:float=1.0, dropout:float=0.5, bn:bool=True):
         super().__init__()
-        self.bn = bn
         self.res_scale = res_scale
         layers = []
-        layers.append(ConvBlock(ni, nf, ks=4, bn=bn, stride=2))
+        layers.append(ConvBlock(ni, nf, ks=4, stride=2, bn=bn))
         layers.append(nn.LeakyReLU())
         layers.append(nn.Dropout2d(dropout))
 
         self.mid = nn.Sequential(*layers)
         self.mid_shortcut = MeanPoolConv(ni, nf)
         self.relu = nn.LeakyReLU()
-        self.norm = nn.BatchNorm2d(nf) 
     
     def forward(self, x):
         x = self.mid(x)*self.res_scale + self.mid_shortcut(x)*self.res_scale
         x = self.relu(x)
-        x = norm(x) if self.bn else x
+        return x
+
+class DownscaleFilterBlock(nn.Module):
+    def __init__(self, ni:int, down_scale:int=2, res_scale:float=1.0, dropout:float=0.5, bn:bool=True):
+        super().__init__()
+        self.res_scale = res_scale
+        layers = []
+        layers.append(ConvBlock(ni, ni//down_scale, ks=1, bn=bn))
+        layers.append(nn.LeakyReLU())
+        layers.append(nn.Dropout2d(dropout))
+        self.mid = nn.Sequential(*layers)
+        self.relu = nn.LeakyReLU()
+    
+    def forward(self, x):
+        x = self.mid(x)*self.res_scale
+        x = self.relu(x)
         return x
 
 class UnetBlock(nn.Module):
-    def __init__(self, up_in, x_in, n_out):
+    def __init__(self, up_in:int , x_in:int , n_out:int, bn:bool=True):
         super().__init__()
         up_out = x_out = n_out//2
-        self.x_conv  = nn.Conv2d(x_in,  x_out,  1)
-        self.tr_conv = UpSampleBlock(up_in, up_out, 2)
+        self.x_conv  = ConvBlock(x_in,  x_out,  ks=1, bn=False, actn=False)
+        self.tr_conv = UpSampleBlock(up_in, up_out, 2, bn=bn)
+        self.relu = nn.LeakyReLU()
         self.bn = nn.BatchNorm2d(n_out)
         
-    def forward(self, up_p, x_p):
+    def forward(self, up_p:int, x_p:int):
         up_p = self.tr_conv(up_p)
         x_p = self.x_conv(x_p)
         cat_p = torch.cat([up_p,x_p], dim=1)
-        return self.bn(F.relu(cat_p))
-
+        out = self.relu(cat_p)
+        if bn: out = self.bn(out)
+        return out
 
 def get_pretrained_resnet_base(layers_cut:int= 0):
     f = resnet34
@@ -161,7 +181,7 @@ def get_pretrained_resnet_base(layers_cut:int= 0):
 
 class SaveFeatures():
     features=None
-    def __init__(self, m): 
+    def __init__(self, m:nn.Module): 
         self.hook = m.register_forward_hook(self.hook_fn)
     def hook_fn(self, module, input, output): 
         self.features = output

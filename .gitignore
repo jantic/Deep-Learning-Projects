@@ -2,3 +2,5 @@ data
 fastai
 .ipynb_checkpoints
 *.pyc
+Jupyter Experiments/1_BlackWhiteToColor/UnetModel_BN.ipynb
+Jupyter Experiments/1_BlackWhiteToColor/test.py

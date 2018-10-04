@@ -9,7 +9,7 @@ class GeneratorModule(ABC, nn.Module):
         set_trainable(self, trainable)
 
     @abstractmethod
-    def get_layer_groups(self)->[]:
+    def get_layer_groups(self, precompute: bool = False)->[]:
         pass
 
     def freeze_to(self, n):
@@ -17,84 +17,69 @@ class GeneratorModule(ABC, nn.Module):
         for l in c:     set_trainable(l, False)
         for l in c[n:]: set_trainable(l, True)
 
-class ResnetImageModifier(GeneratorModule):     
-    def __init__(self, nf:int=128):
-        super().__init__() 
-        
-        self.rn, self.lr_cut = get_pretrained_resnet_base(1)
-        
-        self.color = nn.Sequential(
-            ResBlock(256),
-            ConvBlock(256, nf),
-            ResBlock(nf),
-            ConvBlock(nf, nf//4),
-            ResBlock(nf//4),
-            ConvBlock(nf//4, nf//16),
-            ResBlock(nf//16),
-            UpSampleBlock(nf//16, nf//16, 16),
-            ConvBlock(nf//16,3, actn=False, bn=False)
-        )
-        
-        self.out = nn.Sequential(
-            ConvBlock(6,3, actn=False, bn=False)
-        )
-    
-
-    def get_layer_groups(self)->[]:
-        lgs = list(split_by_idxs(children(self.rn), [self.lr_cut]))
-        return lgs + [children(self)[1:]]
-        
-    def forward(self, orig): 
-        x = self.rn(orig)
-        x = self.color(x)
-        return F.tanh(self.out(torch.cat([orig, x], dim=1)))   
-
 
 class EDSRImageModifier(GeneratorModule):
-    def __init__(self, nf=32):
+    def __init__(self, nf=128):
         super().__init__() 
         rn, lr_cut = get_pretrained_resnet_base()
 
         self.rn = rn
-        set_trainable(rn, False)
+        #set_trainable(rn, False)
         self.lr_cut = lr_cut
-        self.sfs = [SaveFeatures(rn[i]) for i in [2,4,5,6]]
-        
-        self.up1 = UpSampleBlock(256, nf, 16)  #256 in
-        self.up2 = UpSampleBlock(128, nf, 8)  #128 in
-        self.up3 = UpSampleBlock(64, nf, 4)    #64 in
-        self.up4 = UpSampleBlock(64, nf, 2)   #64 in  
-        nf_up = nf*4+3
+        self.sfs = [SaveFeatures(rn[i]) for i in [2,4,5,6,7]]
+
+        self.up0 = nn.Sequential(
+            UpSampleBlock(512, 256, 2),
+            UpSampleBlock(256, 128, 2),
+            UpSampleBlock(128, 64, 2), 
+            UpSampleBlock(64, 32, 2), 
+            UpSampleBlock(32, 16, 2))
+        self.up1 = nn.Sequential(
+            UpSampleBlock(256, 128, 2),
+            UpSampleBlock(128, 64, 2), 
+            UpSampleBlock(64, 32, 2), 
+            UpSampleBlock(32, 16, 2))
+        self.up2 = nn.Sequential(
+            UpSampleBlock(128, 64, 2),
+            UpSampleBlock(64, 32, 2),
+            UpSampleBlock(32, 16, 2))
+        self.up3 = nn.Sequential(
+            UpSampleBlock(64, 32, 2),
+            UpSampleBlock(32, 16, 2))
+        self.up4 = UpSampleBlock(64, 32, 2)   #64 in  
+        nf_up=99
  
-        mid_layers = []
-        mid_layers += [ConvBlock(nf_up,nf, bn=True, actn=False)]
+        mid_layers = [nn.BatchNorm2d(nf_up)]
+        mid_layers += [ConvBlock(nf_up,nf, actn=False, bn=False)]
         
-        for i in range(8): 
+        for i in range(10): 
             mid_layers.append(
                 ResSequential(
                 [ConvBlock(nf, nf, actn=True, bn=False), 
                  ConvBlock(nf, nf, actn=False, bn=False)], 0.1)
             )
             
-        mid_layers += [nn.BatchNorm2d(nf), ConvBlock(nf, 3, bn=False, actn=False)]
+        mid_layers += [nn.BatchNorm2d(nf)]
         self.upconv = nn.Sequential(*mid_layers)
              
         out_layers = []
-        out_layers += [ConvBlock(6, 3, bn=False, actn=False)]
+        out_layers += [ConvBlock(nf, 3, ks=3, actn=False, bn=False)]
+        out_layers += [nn.Tanh()]
         self.out = nn.Sequential(*out_layers)
 
-    def get_layer_groups(self)->[]:
+    def get_layer_groups(self, precompute: bool = False)->[]:
         lgs = list(split_by_idxs(children(self.rn), [self.lr_cut]))
         return lgs + [children(self)[1:]]
         
-    def forward(self, x): 
+    def forward(self, x: torch.Tensor): 
         self.rn(x)
+        x0 = self.up0(self.sfs[4].features)
         x1 = self.up1(self.sfs[3].features)
         x2 = self.up2(self.sfs[2].features)
         x3 = self.up3(self.sfs[1].features)
         x4 = self.up4(self.sfs[0].features) 
-        x5 = self.upconv(torch.cat([x, x1, x2, x3, x4], dim=1))
-        return F.tanh(self.out(torch.cat([x, x5], dim=1)))    
+        x5 = self.upconv(torch.cat([x, x0, x1, x2, x3, x4], dim=1))
+        return self.out(x5)    
 
 
 class MinimalEDSRImageModifier(GeneratorModule):
@@ -102,7 +87,7 @@ class MinimalEDSRImageModifier(GeneratorModule):
         super().__init__() 
 
         layers = []
-        layers += [ConvBlock(3,nf, bn=True, actn=False)]
+        layers += [ConvBlock(3,nf, actn=False)]
         
         for i in range(10): 
             layers.append(
@@ -111,30 +96,33 @@ class MinimalEDSRImageModifier(GeneratorModule):
                  ConvBlock(nf, nf, actn=False, bn=False)], 0.1)
             )
             
-        layers += [nn.BatchNorm2d(nf), ConvBlock(nf, 3, bn=False, actn=False)]
-        layers += [ConvBlock(3, 3, bn=False, actn=False)]
+        layers += [nn.BatchNorm2d(nf)]
+        layers += [ConvBlock(nf, 3, bn=False, actn=False)]
+        layers += [nn.Tanh()]
         self.out = nn.Sequential(*layers)
 
-    def get_layer_groups(self)->[]:
+    def get_layer_groups(self, precompute: bool = False)->[]:
         return children(self)
         
     def forward(self, x): 
-        return F.tanh(self.out(x))   
+        return self.out(x)
 
-class Unet34(GeneratorModule):  
-    def __init__(self, nf=256):
+
+class Unet34(GeneratorModule): 
+    def __init__(self, nf_factor:int=1):
         super().__init__()
         self.rn, self.lr_cut = get_pretrained_resnet_base()
         self.sfs = [SaveFeatures(self.rn[i]) for i in [2,4,5,6]]
-        self.up1 = UnetBlock(512,256,nf)
-        self.up2 = UnetBlock(nf,128,nf)
-        self.up3 = UnetBlock(nf,64,nf)
-        self.up4 = UnetBlock(nf,64,nf)
-        self.up5 = UpSampleBlock(nf, nf, 2)      
-        self.out= nn.Sequential(nn.BatchNorm2d(nf), ConvBlock(nf, 3, ks=1, actn=False, bn=False))
+
+        self.up1 = UnetBlock(512,256,512*nf_factor)
+        self.up2 = UnetBlock(512*nf_factor,128,256*nf_factor)
+        self.up3 = UnetBlock(256*nf_factor,64,128*nf_factor)
+        self.up4 = UnetBlock(128*nf_factor,64,64*nf_factor)
+        self.up5 = UpSampleBlock(64*nf_factor, 32*nf_factor, 2)    
+        self.out= nn.Sequential(ConvBlock(32*nf_factor, 3, ks=3, actn=False, bn=False), nn.Tanh())
            
-    def forward(self, x):
-        x = F.relu(self.rn(x))
+    def forward(self, x: torch.Tensor):
+        x = F.leaky_relu(self.rn(x))
         x = self.up1(x, self.sfs[3].features)
         x = self.up2(x, self.sfs[2].features)
         x = self.up3(x, self.sfs[1].features)
@@ -143,7 +131,7 @@ class Unet34(GeneratorModule):
         x = self.out(x)
         return x
     
-    def get_layer_groups(self)->[]:
+    def get_layer_groups(self, precompute: bool = False)->[]:
         lgs = list(split_by_idxs(children(self.rn), [self.lr_cut]))
         return lgs + [children(self)[1:]]
     
@@ -151,7 +139,7 @@ class Unet34(GeneratorModule):
         for sf in self.sfs: 
             sf.remove()
 
-class GeneratorModelWrapper():
+class LearnerGenModuleWrapper():
     def __init__(self, model: GeneratorModule, name:str):
         self.model = to_gpu(model)
         self.name = name

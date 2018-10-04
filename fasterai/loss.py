@@ -25,12 +25,12 @@ class FeatureLoss(nn.Module):
         res = [F.l1_loss(input,target)/100]
         targ_feat = [V(o.features.data.clone()) for o in self.sfs]
         self.m(input)
-        res += [F.l1_loss(self.flatten(inp.features),self.flatten(targ))*wgt
+        res += [F.l1_loss(self._flatten(inp.features),self._flatten(targ))*wgt
                for inp,targ,wgt in zip(self.sfs, targ_feat, self.wgts)]
         if sum_layers: res = sum(res)
         return res
     
-    def flatten(self, x): 
+    def _flatten(self, x): 
         return x.view(x.size(0), -1)
     
     def close(self):
