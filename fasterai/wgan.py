@@ -161,7 +161,7 @@ class WGANCriticTrainingResult():
 class WGANTrainer():
     def __init__(self, netD: nn.Module, netG: GeneratorModule, md: ImageData, 
             bs:int, sz:int, dpath: Path, gpath: Path, gplambda=10, citers=1, 
-            save_iters=5000, genloss_fns:[]=[PerceptualLoss(100)]):
+            save_iters=1000, genloss_fns:[]=[PerceptualLoss(100)]):
         self.netD = netD
         self.netG = netG
         self.md = md

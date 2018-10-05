@@ -59,3 +59,16 @@ class PerceptualLoss(nn.Module):
         real_features = self.model.forward(target)
         loss = self.loss_fn(fake_features, real_features.detach())
         return loss*self.multiplier
+
+
+class CombinedVisualLoss(nn.Module):		
+    def __init__(self, feat_loss_multiplier:float=1e3, total_multiplier:float=1.0):
+        super().__init__()
+        self.ploss = PerceptualLoss()
+        self.floss = FeatureLoss(multiplier=feat_loss_multiplier)
+        self.total_multiplier = total_multiplier
+	
+    def forward(self, input, target):
+        p = self.ploss(input, target)
+        f = self.floss(input, target)
+        return (p+f)*self.total_multiplier

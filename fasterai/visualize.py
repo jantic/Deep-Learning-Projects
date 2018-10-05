@@ -6,6 +6,7 @@ from fasterai.wgan import WGANGenTrainingResult, WGANCriticTrainingResult, WGANT
 from fasterai.files import *
 from IPython.display import display
 from tensorboardX import SummaryWriter
+import torchvision.utils as vutils
 import shutil
 import statistics
 
@@ -40,15 +41,33 @@ def plot_images_from_dataset(ds: FilesDataset, start_idx: int, count: int, figsi
     for idx,ax in zip(idxs, axes.flat):  
         plot_image_from_ndarray(ds.denorm(ds[idx][0])[0], axes=ax)
 
-
-def plot_image_outputs_from_model(ds: FilesDataset, model: nn.Module, idxs: [int], figsize=(20,20), max_columns=6, immediate_display=True):
+def generate_raw_image_tensors_from_model(ds: FilesDataset, model: nn.Module, idxs:[int]):
     image_pairs = []
 
     for idx in idxs:
         x,_=ds[idx]
-        preds = model(VV(x[None]))
-        image_pairs.append((ds.denorm(x[None])[0], ds.denorm(preds)[0]))
+        vx = VV(x[None])
+        preds = model(vx)
+        image_pairs.append((vx, preds))
 
+    return image_pairs   
+
+def generate_denormed_images_from_tensors(ds: FilesDataset, raw_image_tensors:[]):
+    image_pairs = []
+
+    for x,y in raw_image_tensors:
+        image_pairs.append((ds.denorm(to_np(x.data))[0], ds.denorm(y)[0]))
+
+    return image_pairs
+
+def generate_denormed_images_from_model(ds: FilesDataset, model: nn.Module, idxs: [int]):
+    raw_image_tensors = generate_raw_image_tensors_from_model(ds=ds, model=model, idxs=idxs)
+    return generate_denormed_images_from_tensors(ds=ds, raw_image_tensors=raw_image_tensors)
+
+
+
+def plot_image_outputs_from_model(ds: FilesDataset, model: nn.Module, idxs: [int], figsize=(20,20), max_columns=6, immediate_display=True):
+    image_pairs = generate_denormed_images_from_model(ds, model, idxs)
     plot_images_from_ndarray_pairs(image_pairs, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
 
 def _get_num_rows_columns(num_images: int, max_columns: int):
@@ -114,9 +133,44 @@ class ModelStatsVisualizer():
         self.tbwriter.close()
         self.hook.remove()
 
+class ImageGenVisualizer():
+    def __init__(self, jupyter_images=False):
+        self.jupyter_images=jupyter_images
 
-class WganTrainerStatsVisualizer():
-    def __init__(self, base_dir: Path, trainer: WGANTrainer, name: str, stats_iters: int=10, visual_iters: int=100):
+    def _output_image_gen_visuals(self, ds: FilesDataset, model: nn.Module):
+        #TODO:  Parameterize these
+        start_idx=0
+        count = 8
+        end_index = start_idx + count
+        idxs = list(range(start_idx,end_index))
+        raw_image_tensors = generate_raw_image_tensors_from_model(ds=ds, model=model, idxs=idxs)
+        self._write_tensorboard_images(raw_image_tensors)
+        image_pairs = generate_denormed_images_from_tensors(ds=ds, raw_image_tensors=raw_image_tensors)
+        if self.jupyter_images:
+            self._show_images_in_jupyter(image_pairs)
+    
+    def _write_tensorboard_images(self, raw_image_tensors:[]):
+        orig_images = []
+        gen_images = []
+
+        for (x,y) in raw_image_tensors:
+            orig_images.append(x[0])
+            gen_images.append(y[0])
+
+        self.tbwriter.add_image('orig images', vutils.make_grid(orig_images, normalize=True), self.iter_count)
+        self.tbwriter.add_image('gen images', vutils.make_grid(gen_images, normalize=True), self.iter_count)
+
+
+    def _show_images_in_jupyter(self, image_pairs:[]):
+        #TODO:  Parameterize these
+        figsize=(20,20)
+        max_columns=4
+        immediate_display=True
+        plot_images_from_ndarray_pairs(image_pairs, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
+
+class WganTrainerStatsVisualizer(ImageGenVisualizer):
+    def __init__(self, base_dir: Path, trainer: WGANTrainer, name: str, stats_iters: int=10, visual_iters: int=100, jupyter_images=False):
+        super().__init__(jupyter_images=jupyter_images)
         self.base_dir = base_dir
         self.name = name
         log_dir = base_dir/name
@@ -138,8 +192,10 @@ class WganTrainerStatsVisualizer():
         if self.iter_count % self.visual_iters != 0:
             return
 
-        self._show_images_in_jupyter(trainer)
-        
+        ds = trainer.md.val_ds
+        model = trainer.netG
+        self._output_image_gen_visuals(ds=ds, model=model)
+
 
     def _write_tensorboard_stats(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
         self.tbwriter.add_scalar('/loss/wdist', cresult.wdist, self.iter_count)
@@ -155,27 +211,15 @@ class WganTrainerStatsVisualizer():
         print(f'\nWDist {cresult.wdist}; RScore {cresult.dreal}; FScore {cresult.dfake}; GAddlLoss {gresult.gaddlloss}; ' + 
                 f'GCount: {gresult.gcount}; GPenalty: {cresult.gpenalty}; GCost: {gresult.gcost}; ConPenalty: {cresult.conpenalty}')
 
-    def _show_images_in_jupyter(self, trainer: WGANTrainer):
-        md = trainer.md
-        model = trainer.netG
-        #TODO:  Parameterize these
-        start_idx=0
-        count = 8
-        figsize=(20,20)
-        max_columns=4
-        immediate_display=True
-        end_index = start_idx + count
-        idxs = list(range(start_idx,end_index))
-        plot_image_outputs_from_model(ds=md.val_ds, model=model, idxs=idxs, max_columns=max_columns, immediate_display=immediate_display)
     
     def close(self):
         self.tbwriter.close()
         self.hook.remove()
 
 
-class ImageGenLearnerVisualizerCB(Callback):
-    def __init__(self, base_dir: Path, model: nn.Module,  md: ImageData, name: str, stats_iters: int=25, visual_iters: int=250):
-        super().__init__()
+class ImageGenLearnerVisualizerCB(Callback,ImageGenVisualizer):
+    def __init__(self, base_dir: Path, model: nn.Module,  md: ImageData, name: str, stats_iters: int=25, visual_iters: int=200, jupyter_images=False):
+        super().__init__(jupyter_images=jupyter_images)
         self.base_dir = base_dir
         self.name = name
         log_dir = base_dir/name
@@ -197,8 +241,8 @@ class ImageGenLearnerVisualizerCB(Callback):
         return
 
     def on_epoch_end(self, metrics):
-        self._write_tensorboard_stats(metrics) 
-        self._show_images_in_jupyter()
+        self._write_tensorboard_stats(metrics)       
+        self._output_image_gen_visuals(ds=self.md.val_ds, model=self.model)
 
     def on_phase_end(self):
         return
@@ -213,7 +257,7 @@ class ImageGenLearnerVisualizerCB(Callback):
         if self.iter_count % self.visual_iters != 0:
             return
 
-        self._show_images_in_jupyter()
+        self._output_image_gen_visuals(ds=self.md.val_ds, model=self.model)
 
     def on_train_end(self):
         return
@@ -231,19 +275,6 @@ class ImageGenLearnerVisualizerCB(Callback):
                     
         else: 
             self.tbwriter.add_scalar('/loss/trn_loss', metrics, self.iter_count)
-
-
-    def _show_images_in_jupyter(self):
-        #TODO:  Parameterize these
-        start_idx=0
-        count = 8
-        figsize=(20,20)
-        max_columns=4
-        immediate_display=True
-        end_index = start_idx + count
-        idxs = list(range(start_idx,end_index))
-        plot_image_outputs_from_model(ds=self.md.val_ds, model=self.model, idxs=idxs, max_columns=max_columns, 
-            immediate_display=immediate_display)
     
     def close(self):
         self.tbwriter.close()
