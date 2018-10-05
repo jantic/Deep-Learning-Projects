@@ -10,91 +10,82 @@ import torchvision.utils as vutils
 import shutil
 import statistics
 
-def plot_image_from_ndarray(image: ndarray, axes:Axes=None, figsize=(20,20)):
-    if axes is None: 
-        _,axes = plt.subplots(figsize=figsize)
-    clipped_image =np.clip(image,0,1)
-    axes.imshow(clipped_image)
-    axes.axis('off')
 
 
-def plot_images_from_ndarray_pairs(image_pairs: [(ndarray, ndarray)], figsize=(20,20), max_columns=6, immediate_display=True):
-    num_pairs = len(image_pairs)
-    num_images = num_pairs * 2
-    rows, columns = _get_num_rows_columns(num_images, max_columns)
+class ModelImageVisualizer():
+    def __init__(self):
+        return 
 
-    fig, axes = plt.subplots(rows, columns, figsize=figsize)
-    for i,(x,y) in enumerate(image_pairs):
-        plot_image_from_ndarray(x, axes=axes.flat[i*2])
-        plot_image_from_ndarray(y, axes=axes.flat[i*2+1])
-
-    if immediate_display:
-        display(fig)
+    def plot_image_from_ndarray(self, image: ndarray, axes:Axes=None, figsize=(20,20)):
+        if axes is None: 
+            _,axes = plt.subplots(figsize=figsize)
+        clipped_image =np.clip(image,0,1)
+        axes.imshow(clipped_image)
+        axes.axis('off')
 
 
-def plot_images_from_dataset(ds: FilesDataset, start_idx: int, count: int, figsize=(20,20), max_columns=6):
-    idxs = list(range(start_idx, start_idx+count))
-    num_images = len(idxs)
-    rows, columns = _get_num_rows_columns(num_images, max_columns)
-    _,axes=plt.subplots(rows,columns,figsize=figsize)
+    def plot_images_from_ndarray_pairs(self, image_pairs: [(ndarray, ndarray)], figsize=(20,20), max_columns=6, immediate_display=True):
+        num_pairs = len(image_pairs)
+        num_images = num_pairs * 2
+        rows, columns = self._get_num_rows_columns(num_images, max_columns)
 
-    for idx,ax in zip(idxs, axes.flat):  
-        plot_image_from_ndarray(ds.denorm(ds[idx][0])[0], axes=ax)
+        fig, axes = plt.subplots(rows, columns, figsize=figsize)
+        for i,(x,y) in enumerate(image_pairs):
+            self.plot_image_from_ndarray(x, axes=axes.flat[i*2])
+            self.plot_image_from_ndarray(y, axes=axes.flat[i*2+1])
 
-def generate_raw_image_tensors_from_model(ds: FilesDataset, model: nn.Module, idxs:[int]):
-    image_pairs = []
-
-    for idx in idxs:
-        x,_=ds[idx]
-        vx = VV(x[None])
-        preds = model(vx)
-        image_pairs.append((vx, preds))
-
-    return image_pairs   
-
-def generate_denormed_images_from_tensors(ds: FilesDataset, raw_image_tensors:[]):
-    image_pairs = []
-
-    for x,y in raw_image_tensors:
-        image_pairs.append((ds.denorm(to_np(x.data))[0], ds.denorm(y)[0]))
-
-    return image_pairs
-
-def generate_denormed_images_from_model(ds: FilesDataset, model: nn.Module, idxs: [int]):
-    raw_image_tensors = generate_raw_image_tensors_from_model(ds=ds, model=model, idxs=idxs)
-    return generate_denormed_images_from_tensors(ds=ds, raw_image_tensors=raw_image_tensors)
+        if immediate_display:
+            display(fig)
 
 
+    def plot_images_from_dataset(self, ds: FilesDataset, start_idx: int, count: int, figsize=(20,20), max_columns=6):
+        idxs = list(range(start_idx, start_idx+count))
+        num_images = len(idxs)
+        rows, columns = self._get_num_rows_columns(num_images, max_columns)
+        _,axes=plt.subplots(rows,columns,figsize=figsize)
 
-def plot_image_outputs_from_model(ds: FilesDataset, model: nn.Module, idxs: [int], figsize=(20,20), max_columns=6, immediate_display=True):
-    image_pairs = generate_denormed_images_from_model(ds, model, idxs)
-    plot_images_from_ndarray_pairs(image_pairs, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
+        for idx,ax in zip(idxs, axes.flat):  
+            self.plot_image_from_ndarray(ds.denorm(ds[idx][0])[0], axes=ax)
 
-def _get_num_rows_columns(num_images: int, max_columns: int):
-    columns = min(num_images, max_columns)
-    rows = num_images//columns
-    rows = rows if rows * columns == num_images else rows + 1
-    return rows, columns
+    def generate_raw_image_tensors_from_model(self, ds: FilesDataset, model: nn.Module, idxs:[int]):
+        image_pairs = []
 
-class ModelStatsVisualizer():
-    def __init__(self, base_dir: Path, module: nn.Module, name: str, stats_iters: int=10):
-        self.base_dir = base_dir
-        self.name = name
-        log_dir = base_dir/name
-        clear_directory(log_dir)
-        self.tbwriter = SummaryWriter(log_dir=str(log_dir))
-        self.hook = module.register_forward_hook(self.forward_hook)
-        self.stats_iters = stats_iters
-        self.iter_count = 0
+        for idx in idxs:
+            x,_=ds[idx]
+            vx = VV(x[None])
+            preds = model(vx)
+            image_pairs.append((vx, preds))
 
-    def forward_hook(self, module: nn.Module, input, output): 
-        self.iter_count += 1
-        if self.iter_count % self.stats_iters != 0:
-            return
+        return image_pairs   
 
-        self._write_tensorboard_stats(module)  
+    def generate_denormed_images_from_tensors(self, ds: FilesDataset, raw_image_tensors:[]):
+        image_pairs = []
 
-    def _write_tensorboard_stats(self, module: nn.Module):
+        for x,y in raw_image_tensors:
+            image_pairs.append((ds.denorm(to_np(x.data))[0], ds.denorm(y)[0]))
+
+        return image_pairs
+
+    def generate_denormed_images_from_model(self, ds: FilesDataset, model: nn.Module, idxs: [int]):
+        raw_image_tensors = self.generate_raw_image_tensors_from_model(ds=ds, model=model, idxs=idxs)
+        return self.generate_denormed_images_from_tensors(ds=ds, raw_image_tensors=raw_image_tensors)
+
+
+    def plot_image_outputs_from_model(self, ds: FilesDataset, model: nn.Module, idxs: [int], figsize=(20,20), max_columns=6, immediate_display=True):
+        image_pairs = self.generate_denormed_images_from_model(ds, model, idxs)
+        self.plot_images_from_ndarray_pairs(image_pairs, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
+
+    def _get_num_rows_columns(self, num_images: int, max_columns: int):
+        columns = min(num_images, max_columns)
+        rows = num_images//columns
+        rows = rows if rows * columns == num_images else rows + 1
+        return rows, columns
+
+class ModelStatsVisualizer(): 
+    def __init__(self):
+        return 
+
+    def write_tensorboard_stats(self, module: nn.Module, iter_count:int, tbwriter: SummaryWriter):
         gradients = [x  for x in module.parameters() if x.grad is not None]
         gradient_nps = [to_np(x.data) for x in gradients]
  
@@ -102,54 +93,50 @@ class ModelStatsVisualizer():
             return 
 
         avg_norm = sum(x.data.norm() for x in gradients)/len(gradients)
-        self.tbwriter.add_scalar('/gradients/avg_norm', avg_norm, self.iter_count)
+        tbwriter.add_scalar('/gradients/avg_norm', avg_norm, iter_count)
 
         median_norm = statistics.median(x.data.norm() for x in gradients)
-        self.tbwriter.add_scalar('/gradients/median_norm', median_norm, self.iter_count)
+        tbwriter.add_scalar('/gradients/median_norm', median_norm, iter_count)
 
         max_norm = max(x.data.norm() for x in gradients)
-        self.tbwriter.add_scalar('/gradients/max_norm', max_norm, self.iter_count)
+        tbwriter.add_scalar('/gradients/max_norm', max_norm, iter_count)
 
         min_norm = min(x.data.norm() for x in gradients)
-        self.tbwriter.add_scalar('/gradients/min_norm', min_norm, self.iter_count)
+        tbwriter.add_scalar('/gradients/min_norm', min_norm, iter_count)
 
         num_zeros = sum((np.asarray(x)==0.0).sum() for x in  gradient_nps)
-        self.tbwriter.add_scalar('/gradients/num_zeros', num_zeros, self.iter_count)
+        tbwriter.add_scalar('/gradients/num_zeros', num_zeros, iter_count)
 
 
         avg_gradient= sum(x.data.mean() for x in gradients)/len(gradients)
-        self.tbwriter.add_scalar('/gradients/avg_gradient', avg_gradient, self.iter_count)
+        tbwriter.add_scalar('/gradients/avg_gradient', avg_gradient, iter_count)
 
         median_gradient = statistics.median(x.data.median() for x in gradients)
-        self.tbwriter.add_scalar('/gradients/median_gradient', median_gradient, self.iter_count)
+        tbwriter.add_scalar('/gradients/median_gradient', median_gradient, iter_count)
 
         max_gradient = max(x.data.max() for x in gradients) 
-        self.tbwriter.add_scalar('/gradients/max_gradient', max_gradient, self.iter_count)
+        tbwriter.add_scalar('/gradients/max_gradient', max_gradient, iter_count)
 
         min_gradient = min(x.data.min() for x in gradients) 
-        self.tbwriter.add_scalar('/gradients/min_gradient', min_gradient, self.iter_count)
-
-    def close(self):
-        self.tbwriter.close()
-        self.hook.remove()
+        tbwriter.add_scalar('/gradients/min_gradient', min_gradient, iter_count)
 
 class ImageGenVisualizer():
-    def __init__(self, jupyter_images=False):
-        self.jupyter_images=jupyter_images
+    def __init__(self):
+        self.model_vis = ModelImageVisualizer()
 
-    def _output_image_gen_visuals(self, ds: FilesDataset, model: nn.Module):
+    def output_image_gen_visuals(self, ds: FilesDataset, model: nn.Module, iter_count:int, tbwriter: SummaryWriter, jupyter:bool=False):
         #TODO:  Parameterize these
         start_idx=0
         count = 8
         end_index = start_idx + count
         idxs = list(range(start_idx,end_index))
-        raw_image_tensors = generate_raw_image_tensors_from_model(ds=ds, model=model, idxs=idxs)
-        self._write_tensorboard_images(raw_image_tensors)
-        image_pairs = generate_denormed_images_from_tensors(ds=ds, raw_image_tensors=raw_image_tensors)
-        if self.jupyter_images:
+        raw_image_tensors = self.model_vis.generate_raw_image_tensors_from_model(ds=ds, model=model, idxs=idxs)
+        self.write_tensorboard_images(raw_image_tensors=raw_image_tensors, iter_count=iter_count, tbwriter=tbwriter)
+        image_pairs = self.model_vis.generate_denormed_images_from_tensors(ds=ds, raw_image_tensors=raw_image_tensors)
+        if jupyter:
             self._show_images_in_jupyter(image_pairs)
     
-    def _write_tensorboard_images(self, raw_image_tensors:[]):
+    def write_tensorboard_images(self, raw_image_tensors:[], iter_count:int, tbwriter: SummaryWriter):
         orig_images = []
         gen_images = []
 
@@ -157,127 +144,58 @@ class ImageGenVisualizer():
             orig_images.append(x[0])
             gen_images.append(y[0])
 
-        self.tbwriter.add_image('orig images', vutils.make_grid(orig_images, normalize=True), self.iter_count)
-        self.tbwriter.add_image('gen images', vutils.make_grid(gen_images, normalize=True), self.iter_count)
+        tbwriter.add_image('orig images', vutils.make_grid(orig_images, normalize=True), iter_count)
+        tbwriter.add_image('gen images', vutils.make_grid(gen_images, normalize=True), iter_count)
 
 
-    def _show_images_in_jupyter(self, image_pairs:[]):
+    def show_images_in_jupyter(self, image_pairs:[]):
         #TODO:  Parameterize these
         figsize=(20,20)
         max_columns=4
         immediate_display=True
-        plot_images_from_ndarray_pairs(image_pairs, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
-
-class WganTrainerStatsVisualizer(ImageGenVisualizer):
-    def __init__(self, base_dir: Path, trainer: WGANTrainer, name: str, stats_iters: int=10, visual_iters: int=100, jupyter_images=False):
-        super().__init__(jupyter_images=jupyter_images)
-        self.base_dir = base_dir
-        self.name = name
-        log_dir = base_dir/name
-        clear_directory(log_dir)
-        self.tbwriter = SummaryWriter(log_dir=str(log_dir))
-        self.hook = trainer.register_train_loop_hook(self.train_loop_hook)
-        self.stats_iters = stats_iters
-        self.visual_iters = visual_iters
-        self.iter_count = 0
-
-    def train_loop_hook(self, trainer: WGANTrainer, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult): 
-        self.iter_count += 1
-        if self.iter_count % self.stats_iters != 0:
-            return
-
-        self._print_stats_in_jupyter(gresult, cresult)
-        self._write_tensorboard_stats(gresult, cresult) 
-
-        if self.iter_count % self.visual_iters != 0:
-            return
-
-        ds = trainer.md.val_ds
-        model = trainer.netG
-        self._output_image_gen_visuals(ds=ds, model=model)
+        self.model_vis.plot_images_from_ndarray_pairs(image_pairs, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
 
 
-    def _write_tensorboard_stats(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
-        self.tbwriter.add_scalar('/loss/wdist', cresult.wdist, self.iter_count)
-        self.tbwriter.add_scalar('/loss/dfake', cresult.dfake, self.iter_count)
-        self.tbwriter.add_scalar('/loss/dreal', cresult.dreal, self.iter_count)
-        self.tbwriter.add_scalar('/loss/gpenalty', cresult.gpenalty, self.iter_count)
-        self.tbwriter.add_scalar('/loss/gcost', gresult.gcost, self.iter_count)
-        self.tbwriter.add_scalar('/loss/gcount', gresult.gcount, self.iter_count)
-        self.tbwriter.add_scalar('/loss/conpenalty', cresult.conpenalty, self.iter_count)
-        self.tbwriter.add_scalar('/loss/gaddlloss', gresult.gaddlloss, self.iter_count)
+class WganTrainerStatsVisualizer():
+    def __init__(self):
+        return
 
-    def _print_stats_in_jupyter(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
+    def write_tensorboard_stats(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult, iter_count:int, tbwriter: SummaryWriter):
+        tbwriter.add_scalar('/loss/wdist', cresult.wdist, iter_count)
+        tbwriter.add_scalar('/loss/dfake', cresult.dfake, iter_count)
+        tbwriter.add_scalar('/loss/dreal', cresult.dreal, iter_count)
+        tbwriter.add_scalar('/loss/gpenalty', cresult.gpenalty, iter_count)
+        tbwriter.add_scalar('/loss/gcost', gresult.gcost, iter_count)
+        tbwriter.add_scalar('/loss/gcount', gresult.gcount, iter_count)
+        tbwriter.add_scalar('/loss/conpenalty', cresult.conpenalty, iter_count)
+        tbwriter.add_scalar('/loss/gaddlloss', gresult.gaddlloss, iter_count)
+
+    def print_stats_in_jupyter(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
         print(f'\nWDist {cresult.wdist}; RScore {cresult.dreal}; FScore {cresult.dfake}; GAddlLoss {gresult.gaddlloss}; ' + 
                 f'GCount: {gresult.gcount}; GPenalty: {cresult.gpenalty}; GCost: {gresult.gcost}; ConPenalty: {cresult.conpenalty}')
 
+
+class LearnerStatsVisualizer():
+    def __init__(self):
+        return
     
-    def close(self):
-        self.tbwriter.close()
-        self.hook.remove()
-
-
-class ImageGenLearnerVisualizerCB(Callback,ImageGenVisualizer):
-    def __init__(self, base_dir: Path, model: nn.Module,  md: ImageData, name: str, stats_iters: int=25, visual_iters: int=200, jupyter_images=False):
-        super().__init__(jupyter_images=jupyter_images)
-        self.base_dir = base_dir
-        self.name = name
-        log_dir = base_dir/name
-        clear_directory(log_dir) 
-        self.tbwriter = SummaryWriter(log_dir=str(log_dir))
-        self.stats_iters = stats_iters
-        self.visual_iters = visual_iters
-        self.iter_count = 0
-        self.model = model
-        self.md = md
-
-    def on_train_begin(self):
-        return
-
-    def on_batch_begin(self):
-        return
-        
-    def on_phase_begin(self):
-        return
-
-    def on_epoch_end(self, metrics):
-        self._write_tensorboard_stats(metrics)       
-        self._output_image_gen_visuals(ds=self.md.val_ds, model=self.model)
-
-    def on_phase_end(self):
-        return
-
-    def on_batch_end(self, metrics):
-        self.iter_count += 1
-        if self.iter_count % self.stats_iters != 0:
-            return
-
-        self._write_tensorboard_stats(metrics) 
-
-        if self.iter_count % self.visual_iters != 0:
-            return
-
-        self._output_image_gen_visuals(ds=self.md.val_ds, model=self.model)
-
-    def on_train_end(self):
-        return
-
-    def _write_tensorboard_stats(self, metrics):
+    def write_tensorboard_stats(self, metrics, iter_count:int, tbwriter:SummaryWriter):
         if isinstance(metrics, list):
-            self.tbwriter.add_scalar('/loss/trn_loss', metrics[0], self.iter_count)    
+            tbwriter.add_scalar('/loss/trn_loss', metrics[0], iter_count)    
             if len(metrics) == 1: return
-            self.tbwriter.add_scalar('/loss/val_loss', metrics[1], self.iter_count)        
+            tbwriter.add_scalar('/loss/val_loss', metrics[1], iter_count)        
             if len(metrics) == 2: return
 
             for metric in metrics[2:]:
                 name = metric.__name__
-                self.tbwriter.add_scalar('/loss/'+name, metric, self.iter_count)
+                tbwriter.add_scalar('/loss/'+name, metric, iter_count)
                     
         else: 
-            self.tbwriter.add_scalar('/loss/trn_loss', metrics, self.iter_count)
-    
-    def close(self):
-        self.tbwriter.close()
+            tbwriter.add_scalar('/loss/trn_loss', metrics, iter_count)
+
+  
+
+
 
 
 
