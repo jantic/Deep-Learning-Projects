@@ -19,7 +19,7 @@ class ModelImageSet():
         for idx in idxs:
             x,y=ds[idx]
             orig_tensor = VV(x[None])
-            real_tensor = VV(y[None])
+            real_tensor = V(y[None])
             gen_tensor = model(orig_tensor)
             image_set = ModelImageSet(orig_tensor,real_tensor,gen_tensor, ds)
             image_sets.append(image_set)
@@ -27,14 +27,19 @@ class ModelImageSet():
         return image_sets  
 
     def __init__(self, orig_tensor: torch.Tensor, real_tensor: torch.Tensor, gen_tensor: torch.Tensor, ds:FilesDataset):
-        self.orig_tensor = orig_tensor
-        self.real_tensor = real_tensor
-        self.gen_tensor = gen_tensor
+        self.orig_ndarray = self._convert_to_denormed_ndarray(orig_tensor.data, ds=ds)
+        self.real_ndarray = self._convert_to_denormed_ndarray(real_tensor.data, ds=ds)
+        self.gen_ndarray = self._convert_to_denormed_ndarray(gen_tensor.data, ds=ds)
 
-        self.orig_ndarray = ds.denorm(to_np(orig_tensor.data))[0]
-        self.real_ndarray = ds.denorm(to_np(real_tensor.data))[0]
-        self.gen_ndarray = ds.denorm(to_np(gen_tensor.data))[0]
+        self.orig_tensor = self._convert_to_denormed_tensor(self.orig_ndarray)
+        self.real_tensor = self._convert_to_denormed_tensor(self.real_ndarray)
+        self.gen_tensor = self._convert_to_denormed_tensor(self.gen_ndarray)
 
+    def _convert_to_denormed_ndarray(self, raw_tensor: torch.Tensor, ds:FilesDataset):
+        return ds.denorm(to_np(raw_tensor.data))[0]
+
+    def _convert_to_denormed_tensor(self, denormed_array: ndarray):
+        return V(np.moveaxis(denormed_array,2,0))
 
 
 class ModelImageVisualizer():
@@ -133,9 +138,9 @@ class ImageGenVisualizer():
         real_images = []
 
         for image_set in image_sets:
-            orig_images.append(image_set.orig_tensor[0])
-            gen_images.append(image_set.gen_tensor[0])
-            real_images.append(image_set.real_tensor[0])
+            orig_images.append(image_set.orig_tensor)
+            gen_images.append(image_set.gen_tensor)
+            real_images.append(image_set.real_tensor)
 
         tbwriter.add_image('orig images', vutils.make_grid(orig_images, normalize=True), iter_count)
         tbwriter.add_image('gen images', vutils.make_grid(gen_images, normalize=True), iter_count)
