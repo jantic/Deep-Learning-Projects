@@ -26,10 +26,8 @@ class ModelVisualizationHook():
 
     def forward_hook(self, module: nn.Module, input, output): 
         self.iter_count += 1
-        if self.iter_count % self.stats_iters != 0:
-            return
-
-        self.model_vis.write_tensorboard_stats(module, iter_count=self.iter_count, tbwriter=self.tbwriter)  
+        if self.iter_count % self.stats_iters == 0:
+            self.model_vis.write_tensorboard_stats(module, iter_count=self.iter_count, tbwriter=self.tbwriter)  
 
 
     def close(self):
@@ -54,18 +52,14 @@ class WganVisualizationHook():
 
     def train_loop_hook(self, trainer: WGANTrainer, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult): 
         self.iter_count += 1
-        if self.iter_count % self.stats_iters != 0:
-            return
+        if self.iter_count % self.stats_iters == 0:
+            self.stats_vis.print_stats_in_jupyter(gresult, cresult)
+            self.stats_vis.write_tensorboard_stats(gresult, cresult, iter_count=self.iter_count, tbwriter=self.tbwriter) 
 
-        self.stats_vis.print_stats_in_jupyter(gresult, cresult)
-        self.stats_vis.write_tensorboard_stats(gresult, cresult, iter_count=self.iter_count, tbwriter=self.tbwriter) 
-
-        if self.iter_count % self.visual_iters != 0:
-            return
-
-        ds = trainer.md.val_ds
-        model = trainer.netG
-        self.img_gen_vis.output_image_gen_visuals(ds=ds, model=model, iter_count=self.iter_count, tbwriter=self.tbwriter, jupyter=self.jupyter)
+        if self.iter_count % self.visual_iters == 0:
+            ds = trainer.md.val_ds
+            model = trainer.netG
+            self.img_gen_vis.output_image_gen_visuals(ds=ds, model=model, iter_count=self.iter_count, tbwriter=self.tbwriter, jupyter=self.jupyter)
 
     def close(self):
         self.tbwriter.close()
@@ -107,16 +101,13 @@ class ImageGenVisualizationCallback(Callback):
 
     def on_batch_end(self, metrics):
         self.iter_count += 1
-        if self.iter_count % self.stats_iters != 0:
-            return
 
-        self.learner_vis.write_tensorboard_stats(metrics=metrics, iter_count=self.iter_count, tbwriter=self.tbwriter) 
+        if self.iter_count % self.stats_iters == 0:
+            self.learner_vis.write_tensorboard_stats(metrics=metrics, iter_count=self.iter_count, tbwriter=self.tbwriter) 
 
-        if self.iter_count % self.visual_iters != 0:
-            return
-
-        self.img_gen_vis.output_image_gen_visuals(ds=self.md.val_ds, model=self.model, iter_count=self.iter_count, 
-            tbwriter=self.tbwriter, jupyter=self.jupyter)
+        if self.iter_count % self.visual_iters == 0:
+            self.img_gen_vis.output_image_gen_visuals(ds=self.md.val_ds, model=self.model, iter_count=self.iter_count, 
+                tbwriter=self.tbwriter, jupyter=self.jupyter)
 
     def on_train_end(self):
         return

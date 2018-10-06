@@ -11,6 +11,31 @@ import shutil
 import statistics
 
 
+class ModelImageSet():
+    @staticmethod
+    def get_list_from_model(ds: FilesDataset, model: nn.Module, idxs:[int]):
+        image_sets = []
+
+        for idx in idxs:
+            x,y=ds[idx]
+            orig_tensor = VV(x[None])
+            real_tensor = VV(y[None])
+            gen_tensor = model(orig_tensor)
+            image_set = ModelImageSet(orig_tensor,real_tensor,gen_tensor, ds)
+            image_sets.append(image_set)
+
+        return image_sets  
+
+    def __init__(self, orig_tensor: torch.Tensor, real_tensor: torch.Tensor, gen_tensor: torch.Tensor, ds:FilesDataset):
+        self.orig_tensor = orig_tensor
+        self.real_tensor = real_tensor
+        self.gen_tensor = gen_tensor
+
+        self.orig_ndarray = ds.denorm(to_np(orig_tensor.data))[0]
+        self.real_ndarray = ds.denorm(to_np(real_tensor.data))[0]
+        self.gen_ndarray = ds.denorm(to_np(gen_tensor.data))[0]
+
+
 
 class ModelImageVisualizer():
     def __init__(self):
@@ -24,56 +49,23 @@ class ModelImageVisualizer():
         axes.axis('off')
 
 
-    def plot_images_from_ndarray_pairs(self, image_pairs: [(ndarray, ndarray)], figsize=(20,20), max_columns=6, immediate_display=True):
-        num_pairs = len(image_pairs)
-        num_images = num_pairs * 2
+    def plot_images_from_image_sets(self, image_sets: [ModelImageSet], figsize=(20,20), max_columns=6, immediate_display=True):
+        num_sets = len(image_sets)
+        num_images = num_sets * 2
         rows, columns = self._get_num_rows_columns(num_images, max_columns)
 
         fig, axes = plt.subplots(rows, columns, figsize=figsize)
-        for i,(x,y) in enumerate(image_pairs):
-            self.plot_image_from_ndarray(x, axes=axes.flat[i*2])
-            self.plot_image_from_ndarray(y, axes=axes.flat[i*2+1])
+        for i, image_set in enumerate(image_sets):
+            self.plot_image_from_ndarray(image_set.orig_ndarray, axes=axes.flat[i*2])
+            self.plot_image_from_ndarray(image_set.gen_ndarray, axes=axes.flat[i*2+1])
 
         if immediate_display:
             display(fig)
 
 
-    def plot_images_from_dataset(self, ds: FilesDataset, start_idx: int, count: int, figsize=(20,20), max_columns=6):
-        idxs = list(range(start_idx, start_idx+count))
-        num_images = len(idxs)
-        rows, columns = self._get_num_rows_columns(num_images, max_columns)
-        _,axes=plt.subplots(rows,columns,figsize=figsize)
-
-        for idx,ax in zip(idxs, axes.flat):  
-            self.plot_image_from_ndarray(ds.denorm(ds[idx][0])[0], axes=ax)
-
-    def generate_raw_image_tensors_from_model(self, ds: FilesDataset, model: nn.Module, idxs:[int]):
-        image_pairs = []
-
-        for idx in idxs:
-            x,_=ds[idx]
-            vx = VV(x[None])
-            preds = model(vx)
-            image_pairs.append((vx, preds))
-
-        return image_pairs   
-
-    def generate_denormed_images_from_tensors(self, ds: FilesDataset, raw_image_tensors:[]):
-        image_pairs = []
-
-        for x,y in raw_image_tensors:
-            image_pairs.append((ds.denorm(to_np(x.data))[0], ds.denorm(y)[0]))
-
-        return image_pairs
-
-    def generate_denormed_images_from_model(self, ds: FilesDataset, model: nn.Module, idxs: [int]):
-        raw_image_tensors = self.generate_raw_image_tensors_from_model(ds=ds, model=model, idxs=idxs)
-        return self.generate_denormed_images_from_tensors(ds=ds, raw_image_tensors=raw_image_tensors)
-
-
     def plot_image_outputs_from_model(self, ds: FilesDataset, model: nn.Module, idxs: [int], figsize=(20,20), max_columns=6, immediate_display=True):
-        image_pairs = self.generate_denormed_images_from_model(ds, model, idxs)
-        self.plot_images_from_ndarray_pairs(image_pairs, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
+        image_sets = ModelImageSet.get_list_from_model(ds=ds, model=model, idxs=idxs)
+        self.plot_images_from_image_sets(image_sets=image_sets, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
 
     def _get_num_rows_columns(self, num_images: int, max_columns: int):
         columns = min(num_images, max_columns)
@@ -130,30 +122,32 @@ class ImageGenVisualizer():
         count = 8
         end_index = start_idx + count
         idxs = list(range(start_idx,end_index))
-        raw_image_tensors = self.model_vis.generate_raw_image_tensors_from_model(ds=ds, model=model, idxs=idxs)
-        self.write_tensorboard_images(raw_image_tensors=raw_image_tensors, iter_count=iter_count, tbwriter=tbwriter)
-        image_pairs = self.model_vis.generate_denormed_images_from_tensors(ds=ds, raw_image_tensors=raw_image_tensors)
+        image_sets = ModelImageSet.get_list_from_model(ds=ds, model=model, idxs=idxs)
+        self.write_tensorboard_images(image_sets=image_sets, iter_count=iter_count, tbwriter=tbwriter)
         if jupyter:
-            self._show_images_in_jupyter(image_pairs)
+            self._show_images_in_jupyter(image_sets)
     
-    def write_tensorboard_images(self, raw_image_tensors:[], iter_count:int, tbwriter: SummaryWriter):
+    def write_tensorboard_images(self, image_sets:[ModelImageSet], iter_count:int, tbwriter: SummaryWriter):
         orig_images = []
         gen_images = []
+        real_images = []
 
-        for (x,y) in raw_image_tensors:
-            orig_images.append(x[0])
-            gen_images.append(y[0])
+        for image_set in image_sets:
+            orig_images.append(image_set.orig_tensor[0])
+            gen_images.append(image_set.gen_tensor[0])
+            real_images.append(image_set.real_tensor[0])
 
         tbwriter.add_image('orig images', vutils.make_grid(orig_images, normalize=True), iter_count)
         tbwriter.add_image('gen images', vutils.make_grid(gen_images, normalize=True), iter_count)
+        tbwriter.add_image('real images', vutils.make_grid(real_images, normalize=True), iter_count)
 
 
-    def show_images_in_jupyter(self, image_pairs:[]):
+    def show_images_in_jupyter(self, image_sets:[ModelImageSet]):
         #TODO:  Parameterize these
         figsize=(20,20)
         max_columns=4
         immediate_display=True
-        self.model_vis.plot_images_from_ndarray_pairs(image_pairs, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
+        self.model_vis.plot_images_from_image_sets(image_sets, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
 
 
 class WganTrainerStatsVisualizer():
