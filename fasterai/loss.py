@@ -4,7 +4,7 @@ from fasterai.modules import *
 import torchvision.models as models
 
 class FeatureLoss(nn.Module):
-    def __init__(self, block_wgts: [float] = [0.65,0.25,0.1], multiplier:float=1.0):
+    def __init__(self, block_wgts: [float] = [0.2,0.7,0.1], multiplier:float=1.0):
         super().__init__()
         m_vgg = vgg16(True)
         
@@ -37,38 +37,3 @@ class FeatureLoss(nn.Module):
     def close(self):
         for o in self.sfs: o.remove()
 
-
-class PerceptualLoss(nn.Module):		
-    def __init__(self, multiplier:float=1.0):
-        super().__init__()
-        self.loss_fn = nn.MSELoss()
-        conv_3_3_layer = 14
-        cnn = models.vgg19(pretrained=True).features
-        cnn = cnn.cuda()
-        model = nn.Sequential()
-        model = model.cuda()
-        for i,layer in enumerate(list(cnn)):
-            model.add_module(str(i),layer)
-            if i == conv_3_3_layer: 
-                break
-        self.model = model
-        self.multiplier = multiplier
-	
-    def forward(self, input, target):
-        fake_features = self.model.forward(input)
-        real_features = self.model.forward(target)
-        loss = self.loss_fn(fake_features, real_features.detach())
-        return loss*self.multiplier
-
-
-class CombinedVisualLoss(nn.Module):		
-    def __init__(self, feat_loss_multiplier:float=1e3, total_multiplier:float=1.0):
-        super().__init__()
-        self.ploss = PerceptualLoss()
-        self.floss = FeatureLoss(multiplier=feat_loss_multiplier)
-        self.total_multiplier = total_multiplier
-	
-    def forward(self, input, target):
-        p = self.ploss(input, target)
-        f = self.floss(input, target)
-        return (p+f)*self.total_multiplier

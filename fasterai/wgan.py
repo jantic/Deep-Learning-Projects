@@ -23,27 +23,15 @@ class CriticModule(ABC, nn.Module):
     def get_layer_groups(self)->[]:
         pass
 
-class FeatureCritic(CriticModule): 
-    def _generate_eval_layers(self, nf_in:int, sz:int, filter_reduce:int=2):
+class ResCritic(CriticModule): 
+    def _generate_eval_layers(self, nf_in:int, nf:int, sz:int):
         layers = [] 
         min_size = math.log(self.sz,2)
-        csize,cndf = sz,nf_in
-
-        if filter_reduce > 1:
-            layers.append(DownscaleFilterBlock(cndf, filter_reduce, bn=False))
-            cndf = cndf//filter_reduce
-
-        while csize < min_size:
-            layers.append(UpSampleBlock(cndf, cndf,2, bn=False))
-            csize = int(csize*2)
-
-        if csize > min_size:
-            layers.append(DownSampleResBlock(ni=cndf, nf=cndf*2, dropout=0.2, bn=False))
-            csize = int(csize//2)
-        else:
-            layers.append(ConvBlock(cndf, cndf*2, bn=False))
-            layers.append(nn.Dropout2d(0.2))
-
+        csize,cndf = sz,nf
+        
+        layers.append(ConvBlock(nf_in, cndf, 7, 1, bn=False))
+        layers.append(DownSampleResBlock(ni=cndf, nf=cndf*2, dropout=0.2, bn=False))
+        csize = int(csize//2)
         cndf = cndf*2      
         layers.append(ResBlock(nf=cndf, ks=3, bn=False))
 
@@ -54,94 +42,72 @@ class FeatureCritic(CriticModule):
 
         return nn.Sequential(*layers), cndf
             
-    def __init__(self, sz:int, filter_scale:int= 1):
+    def __init__(self, sz:int, nf:int=128):
         super().__init__()
-        self.rn, self.lr_cut = get_pretrained_resnet_base()
-        set_trainable(self.rn, False)
-        self.sfs = [SaveFeatures(self.rn[i]) for i in [2,4,5,6,7]]
         self.sz = sz
-
-        filter_reduce = 8//filter_scale
-        self.feature_eval_0, f0 = self._generate_eval_layers(512*2, sz//32, filter_reduce)
-        self.feature_eval_1, f1 = self._generate_eval_layers(256*2, sz//16, filter_reduce)
-        self.feature_eval_2, f2 = self._generate_eval_layers(128*2, sz//8, filter_reduce)
-        self.feature_eval_3, f3 = self._generate_eval_layers(64*2,  sz//4, filter_reduce)
-        self.feature_eval_4, f4 = self._generate_eval_layers(64*2, sz//2, filter_reduce)     
-        self.pixel_eval, f5 = self._generate_eval_layers(6, sz, 1)
-
-        nf_mid = f0+f1+f2+f3+f4+f5
-
+        self.pixel_eval, nf_mid = self._generate_eval_layers(3, nf, sz)
         self.mid = ResBlock(nf=nf_mid, ks=3, bn=False)
         self.out = spectral_norm((nn.Conv2d(nf_mid, 1, 1, padding=0, bias=False)))
         
     def forward(self, input: torch.Tensor, orig: torch.Tensor):
-        self.rn(orig)
-        x0 = self.sfs[4].features
-        x1 = self.sfs[3].features
-        x2 = self.sfs[2].features
-        x3 = self.sfs[1].features
-        x4 = self.sfs[0].features
-        
-        self.rn(input)
-        y0 = self.sfs[4].features
-        y1 = self.sfs[3].features
-        y2 = self.sfs[2].features
-        y3 = self.sfs[1].features
-        y4 = self.sfs[0].features 
-
-        f0 = self.feature_eval_0(torch.cat([x0, y0], dim=1))
-        f1 = self.feature_eval_1(torch.cat([x1, y1], dim=1))
-        f2 = self.feature_eval_2(torch.cat([x2, y2], dim=1))
-        f3 = self.feature_eval_3(torch.cat([x3, y3], dim=1))
-        f4 = self.feature_eval_4(torch.cat([x4, y4], dim=1))
-        p = self.pixel_eval(torch.cat([orig, input], dim=1))
-
-        before_last = self.mid(torch.cat([f0,f1,f2,f3,f4,p], dim=1))
+        p = self.pixel_eval(input)
+        before_last = self.mid(p)
         x = self.out(before_last)
         return x, before_last
 
     def get_layer_groups(self)->[]:
-        lgs = list(split_by_idxs(children(self.rn), [self.lr_cut]))
-        return lgs + [children(self)[1:]]
+        return [children(self)]
 
 
 class DCCritic(CriticModule):
-    def __init__(self, ni:int, nf:int, scale:int, sz:int, skip_last_layer=False, layer_norm=True):
+
+    def _generate_reduce_layers(self, nf:int, sz:int):
+        layers=[]
+        layers.append(ConvBlock(nf, nf*2, 4, 2, bn=False))
+        layers.append(nn.Dropout2d(0.5))
+        return layers
+
+    def __init__(self, ni:int, nf:int, scale:int, sz:int):
         super().__init__()
 
         assert (math.log(scale,2)).is_integer()
-        self.initial = ConvBlock(ni, nf, 4, 2, bn=False)
+        self.initial = nn.Sequential(
+            ConvBlock(ni, nf, 4, 2, bn=False),
+            nn.Dropout2d(0.2))
+
         cndf = nf
         csize = sz//2
 
-        mid_layers =  []
-        if layer_norm: mid_layers.append(nn.LayerNorm([cndf, csize, csize]))   
+        mid_layers =  []  
         mid_layers.append(ConvBlock(cndf, cndf, 3, 1, bn=False))
-        if layer_norm: mid_layers.append(nn.LayerNorm([cndf, csize, csize]))
+        mid_layers.append(nn.Dropout2d(0.5))
 
-        self.mid=nn.Sequential(*mid_layers)
-
-        out_layers=[]
         scale_count = 0
 
-        for i in range(int(math.log(scale,2))):
-            out_layers.append(ConvBlock(cndf, cndf*2, 4, 2, bn=False))
+        for i in range(int(math.log(scale,2))-1):
+            layers = self._generate_reduce_layers(nf=cndf, sz=csize)
+            mid_layers.extend(layers)
             cndf = int(cndf*2)
             csize = int(csize//2)
-            if layer_norm: out_layers.append(nn.LayerNorm([cndf, csize, csize]))
-        
-        if not skip_last_layer:
-            out_layers.append(nn.Conv2d(cndf, 1, kernel_size=csize, stride=1, padding=0, bias=False))   
+   
+        self.mid = nn.Sequential(*mid_layers)
+        self.prefinal = nn.Sequential(*self._generate_reduce_layers(nf=cndf, sz=csize))
+        cndf = int(cndf*2)
+        csize = int(csize//2)
 
+        out_layers=[]
+        out_layers.append(nn.Conv2d(cndf, 1, kernel_size=csize, stride=1, padding=0, bias=False))   
         self.out = nn.Sequential(*out_layers) 
 
     def get_layer_groups(self)->[]:
         return children(self)
     
-    def forward(self, x):
-        x=self.initial(x)
+    #Not using orig, but adding this to make it compatible with other discriminators
+    def forward(self, input, orig):
+        x=self.initial(input)
         x=self.mid(x)
-        return self.out(x)
+        before_last = self.prefinal(x)
+        return self.out(before_last), before_last
 
 class WGANGenTrainingResult():
     def __init__(self, gcost: np.array, gcount: int, gaddlloss: np.array):
@@ -161,7 +127,7 @@ class WGANCriticTrainingResult():
 class WGANTrainer():
     def __init__(self, netD: nn.Module, netG: GeneratorModule, md: ImageData, 
             bs:int, sz:int, dpath: Path, gpath: Path, gplambda=10, citers=1, 
-            save_iters=1000, genloss_fns:[]=[PerceptualLoss(100)]):
+            save_iters=1000, genloss_fns:[]=[]):
         self.netD = netD
         self.netG = netG
         self.md = md
