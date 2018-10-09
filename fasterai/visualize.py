@@ -41,7 +41,6 @@ class ModelImageSet():
     def _convert_to_denormed_tensor(self, denormed_array: ndarray):
         return V(np.moveaxis(denormed_array,2,0))
 
-
 class ModelImageVisualizer():
     def __init__(self):
         return 
@@ -78,12 +77,25 @@ class ModelImageVisualizer():
         rows = rows if rows * columns == num_images else rows + 1
         return rows, columns
 
+
+class ModelGraphVisualizer():
+    def __init__(self):
+        return 
+     
+    def write_model_graph_to_tensorboard(self, ds: FilesDataset, model: nn.Module, tbwriter: SummaryWriter):
+        try:
+            x,_=ds[0]
+            tbwriter.add_graph(model, V(x[None]))
+        except Exception as e:
+            print(("Failed to generate graph for model: {0}. Note that there's an outstanding issue with "
+                + "scopes being addressed here:  https://github.com/pytorch/pytorch/pull/12400").format(e))
+
 class ModelStatsVisualizer(): 
     def __init__(self):
         return 
 
-    def write_tensorboard_stats(self, module: nn.Module, iter_count:int, tbwriter: SummaryWriter):
-        gradients = [x  for x in module.parameters() if x.grad is not None]
+    def write_tensorboard_stats(self, model: nn.Module, iter_count:int, tbwriter: SummaryWriter):
+        gradients = [x  for x in model.parameters() if x.grad is not None]
         gradient_nps = [to_np(x.data) for x in gradients]
  
         if len(gradients) == 0:

@@ -24,12 +24,12 @@ class CriticModule(ABC, nn.Module):
         pass
 
 class ResCritic(CriticModule): 
-    def _generate_eval_layers(self, nf_in:int, nf:int, sz:int):
+    def _generate_eval_layers(self, ni:int, nf:int, sz:int):
         layers = [] 
         min_size = math.log(self.sz,2)
         csize,cndf = sz,nf
         
-        layers.append(ConvBlock(nf_in, cndf, 7, 1, bn=False))
+        layers.append(ConvBlock(ni, cndf, 7, 1, bn=False))
         layers.append(DownSampleResBlock(ni=cndf, nf=cndf*2, dropout=0.2, bn=False))
         csize = int(csize//2)
         cndf = cndf*2      
@@ -47,9 +47,9 @@ class ResCritic(CriticModule):
         self.sz = sz
         self.pixel_eval, nf_mid = self._generate_eval_layers(3, nf, sz)
         self.mid = ResBlock(nf=nf_mid, ks=3, bn=False)
-        self.out = spectral_norm((nn.Conv2d(nf_mid, 1, 1, padding=0, bias=False)))
+        self.out = nn.Conv2d(nf_mid, 1, 1, padding=0, bias=False)
         
-    def forward(self, input: torch.Tensor, orig: torch.Tensor):
+    def forward(self, input: torch.Tensor):
         p = self.pixel_eval(input)
         before_last = self.mid(p)
         x = self.out(before_last)
@@ -102,8 +102,7 @@ class DCCritic(CriticModule):
     def get_layer_groups(self)->[]:
         return children(self)
     
-    #Not using orig, but adding this to make it compatible with other discriminators
-    def forward(self, input, orig):
+    def forward(self, input):
         x=self.initial(input)
         x=self.mid(x)
         before_last = self.prefinal(x)
@@ -138,12 +137,18 @@ class WGANTrainer():
         self.gplambda = gplambda
         self.citers = citers
         self._train_loop_hooks = OrderedDict()
+        self._train_begin_hooks = OrderedDict()
         self.genloss_fns = genloss_fns
         self.save_iters=save_iters
 
     def register_train_loop_hook(self, hook):
         handle = hooks.RemovableHandle(self._train_loop_hooks)
         self._train_loop_hooks[handle.id] = hook
+        return handle
+
+    def register_train_begin_hook(self, hook):
+        handle = hooks.RemovableHandle(self._train_begin_hooks)
+        self._train_begin_hooks[handle.id] = hook
         return handle
 
     def train(self, lrs_critic:[int], lrs_gen:[int], clr_critic: (int)=(20,10), clr_gen: (int)=(20,10), 
@@ -159,9 +164,9 @@ class WGANTrainer():
         for epoch in trange(epochs):
             gcount = self._train_one_epoch(gcount)
 
-    def _get_raw_noise_loss(self, orig_image: torch.Tensor):
+    def _get_raw_noise_loss(self):
         noise_image = self._create_noise_batch()
-        return self.netD(noise_image, orig_image)
+        return self.netD(noise_image)
 
     def _create_noise_batch(self): 
         raw_random = V(torch.randn(self.bs, 3, self.sz,self.sz).normal_(0, 1))
@@ -181,6 +186,8 @@ class WGANTrainer():
         self.netG.train()
         data_iter = iter(self.md.trn_dl)
         n = len(self.md.trn_dl)
+        self._call_train_begin_hooks()
+
         with tqdm(total=n) as pbar:
             while True:
                 cresult = self._train_critic(gcount, data_iter, pbar)
@@ -198,13 +205,21 @@ class WGANTrainer():
                 self._call_train_loop_hooks(gresult, cresult)
         
         return gcount
+    
+    def _call_train_begin_hooks(self):
+        for hook in self._train_begin_hooks.values():
+            hook_result = hook()
+            if hook_result is not None:
+                raise RuntimeError(
+                    "train begin hooks should never return any values, but '{}'"
+                    "didn't return None".format(hook))
 
     def _call_train_loop_hooks(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
         for hook in self._train_loop_hooks.values():
-            hook_result = hook(self, gresult, cresult)
+            hook_result = hook(gresult, cresult)
             if hook_result is not None:
                 raise RuntimeError(
-                    "train loop hooks hooks should never return any values, but '{}'"
+                    "train loop hooks should never return any values, but '{}'"
                     "didn't return None".format(hook))
 
     def _get_next_training_images(self, data_iter: Iterable)->(torch.Tensor,torch.Tensor):
@@ -216,9 +231,9 @@ class WGANTrainer():
         return (orig_image, real_image)
 
 
-    def _calculate_wdist(self, orig_image: torch.Tensor, real_image: torch.Tensor, fake_image: torch.Tensor)->torch.Tensor:
-        dreal = self._get_dscore(real_image, orig_image)
-        dfake = self._get_dscore(V(fake_image.data), orig_image)
+    def _calculate_wdist(self, real_image: torch.Tensor, fake_image: torch.Tensor)->torch.Tensor:
+        dreal = self._get_dscore(real_image)
+        dfake = self._get_dscore(V(fake_image.data))
         wdist = dfake - dreal
         return wdist, dfake, dreal
 
@@ -257,10 +272,10 @@ class WGANTrainer():
     def _train_critic_once(self, orig_image: torch.Tensor, real_image: torch.Tensor, noise_gen:bool= False)->WGANCriticTrainingResult:                     
         #Higher == Real
         fake_image = self._create_noise_batch() if noise_gen else self.netG(orig_image)
-        wdist, dfake, dreal = self._calculate_wdist(orig_image, real_image, fake_image)
+        wdist, dfake, dreal = self._calculate_wdist(real_image, fake_image)
         self.netD.zero_grad()        
-        gpenalty = self._calc_gradient_penalty(real_image.data, fake_image.data, orig_image)     
-        conpenalty = self._consistency_penalty(real_image.data, orig_image)      
+        gpenalty = self._calc_gradient_penalty(real_image.data, fake_image.data)     
+        conpenalty = self._consistency_penalty(real_image.data)      
         dcost = dfake - dreal + gpenalty + conpenalty
         dcost.backward()
         self.critic_sched.layer_opt.opt.step()
@@ -283,7 +298,7 @@ class WGANTrainer():
         self.netG.set_trainable(True)
         self.netG.zero_grad()         
         fake_image = self.netG(orig_image)
-        gcost = -self._get_dscore(fake_image, orig_image)
+        gcost = -self._get_dscore(fake_image)
         gaddlloss = self._calc_addl_gen_loss(real_image, fake_image) 
         total_loss = gcost if gaddlloss is None else gcost + gaddlloss
         total_loss.backward()
@@ -300,9 +315,8 @@ class WGANTrainer():
             save_model(self.netD, self.dpath)
             save_model(self.netG, self.gpath)
 
-    def _get_dscore(self, new_image: torch.Tensor, orig_image: torch.Tensor):
-        #return self._normalize_loss(orig_image, self.netD(new_image, orig_image))
-        final, _ = self.netD(new_image, orig_image)
+    def _get_dscore(self, new_image: torch.Tensor):
+        final, _ = self.netD(new_image)
         return final.mean()
 
     def _calc_addl_gen_loss(self, real_data: torch.Tensor, fake_data: torch.Tensor)->torch.Tensor:
@@ -313,7 +327,7 @@ class WGANTrainer():
         return total_loss
 
 
-    def _calc_gradient_penalty(self, real_data: torch.Tensor, fake_data: torch.Tensor, orig_data: torch.Tensor)->torch.Tensor:
+    def _calc_gradient_penalty(self, real_data: torch.Tensor, fake_data: torch.Tensor)->torch.Tensor:
         alpha = torch.rand(self.bs, 1)
         alpha = alpha.expand(self.bs, real_data.nelement()//self.bs).contiguous().view(self.bs, 3, self.sz, self.sz)
         alpha = alpha.cuda()
@@ -321,7 +335,7 @@ class WGANTrainer():
         interpolates = real_data + (alpha*differences)
         interpolates = interpolates.cuda()
         interpolates = autograd.Variable(interpolates, requires_grad=True)
-        disc_interpolates = self._get_dscore(interpolates, orig_data)
+        disc_interpolates = self._get_dscore(interpolates)
         gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
             grad_outputs=torch.ones(disc_interpolates.size()).cuda(),
             create_graph=True, retain_graph=True, only_inputs=True)[0]
@@ -329,8 +343,8 @@ class WGANTrainer():
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * self.gplambda
         return gradient_penalty
 
-    def _consistency_penalty(self, real_data: torch.Tensor, orig_data: torch.Tensor):
-        d1, d_1 = self.netD(real_data, orig_data)
-        d2, d_2 = self.netD(real_data, orig_data)
+    def _consistency_penalty(self, real_data: torch.Tensor):
+        d1, d_1 = self.netD(real_data)
+        d2, d_2 = self.netD(real_data)
         consistency_term = (d1 - d2).norm(2, dim=1) + 0.1 * (d_1 - d_2).norm(2, dim=1)
         return consistency_term.mean()
