@@ -1,4 +1,5 @@
-from fasterai.visualize import ModelStatsVisualizer, ImageGenVisualizer, WganTrainerStatsVisualizer, LearnerStatsVisualizer, ModelGraphVisualizer
+from fasterai.visualize import ModelStatsVisualizer, ImageGenVisualizer, WganTrainerStatsVisualizer
+from fasterai.visualize import LearnerStatsVisualizer, ModelGraphVisualizer, ModelHistogramVisualizer
 from numpy import ndarray
 from matplotlib.axes import Axes
 from fastai.conv_learner import *
@@ -35,7 +36,8 @@ class ModelVisualizationHook():
         self.hook.remove()
 
 class WganVisualizationHook():
-    def __init__(self, base_dir: Path, trainer: WGANTrainer, name: str, stats_iters: int=10, visual_iters: int=100, jupyter:bool=False):
+    def __init__(self, base_dir: Path, trainer: WGANTrainer, name: str, stats_iters: int=10, 
+            visual_iters: int=100, weight_iters: int=25, jupyter:bool=False):
         super().__init__()
         self.base_dir = base_dir
         self.name = name
@@ -46,11 +48,13 @@ class WganVisualizationHook():
         self.hooks.append(trainer.register_train_begin_hook(self.train_begin_hook))
         self.stats_iters = stats_iters
         self.visual_iters = visual_iters
+        self.weight_iters = weight_iters
         self.iter_count = 0
         self.jupyter=jupyter
         self.img_gen_vis = ImageGenVisualizer()
         self.stats_vis = WganTrainerStatsVisualizer()
         self.graph_vis = ModelGraphVisualizer()
+        self.weight_vis = ModelHistogramVisualizer()
         self.trainer = trainer
 
     def train_begin_hook(self):
@@ -69,6 +73,10 @@ class WganVisualizationHook():
             model = self.trainer.netG
             self.img_gen_vis.output_image_gen_visuals(ds=ds, model=model, iter_count=self.iter_count, tbwriter=self.tbwriter, jupyter=self.jupyter)
 
+        if self.iter_count % self.weight_iters == 0:
+            self.weight_vis.write_tensorboard_histograms(model=self.trainer.netG, iter_count=self.iter_count, tbwriter=self.tbwriter)
+            self.weight_vis.write_tensorboard_histograms(model=self.trainer.netD, iter_count=self.iter_count, tbwriter=self.tbwriter)
+
     def close(self):
         self.tbwriter.close()
         for hook in self.hooks:
@@ -76,7 +84,8 @@ class WganVisualizationHook():
 
 
 class ModelVisualizationCallback(Callback):
-    def __init__(self, base_dir: Path, model: nn.Module,  md: ModelData, name: str, stats_iters: int=25, visual_iters: int=200, jupyter:bool=False):
+    def __init__(self, base_dir: Path, model: nn.Module,  md: ModelData, name: str, stats_iters: int=25, 
+        visual_iters: int=200, weight_iters: int=25, jupyter:bool=False):
         super().__init__()
         self.base_dir = base_dir
         self.name = name
@@ -85,12 +94,14 @@ class ModelVisualizationCallback(Callback):
         self.tbwriter = SummaryWriter(log_dir=str(log_dir))
         self.stats_iters = stats_iters
         self.visual_iters = visual_iters
+        self.weight_iters = weight_iters
         self.iter_count = 0
         self.model = model
         self.md = md
         self.jupyter = jupyter
         self.learner_vis = LearnerStatsVisualizer()
         self.graph_vis = ModelGraphVisualizer()
+        self.weight_vis = ModelHistogramVisualizer()
 
     def on_train_begin(self):
         self.output_model_graph()
@@ -116,6 +127,9 @@ class ModelVisualizationCallback(Callback):
         if self.iter_count % self.visual_iters == 0:
             self.output_visuals()
 
+        if self.iter_count % self.weight_iters == 0:
+            self.output_weights()
+
     def on_train_end(self):
         return
 
@@ -128,6 +142,9 @@ class ModelVisualizationCallback(Callback):
     def output_visuals(self):
         self.img_gen_vis.output_image_gen_visuals(ds=self.md.val_ds, model=self.model, iter_count=self.iter_count, 
                 tbwriter=self.tbwriter, jupyter=self.jupyter)
+
+    def output_weights(self):
+        self.weight_vis.write_tensorboard_histograms(model=self.model, iter_count=self.iter_count, tbwriter=self.tbwriter)   
     
     def close(self):
         self.tbwriter.close()

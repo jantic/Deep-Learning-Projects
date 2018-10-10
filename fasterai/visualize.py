@@ -81,12 +81,22 @@ class ModelGraphVisualizer():
             print(("Failed to generate graph for model: {0}. Note that there's an outstanding issue with "
                 + "scopes being addressed here:  https://github.com/pytorch/pytorch/pull/12400").format(e))
 
+class ModelHistogramVisualizer():
+    def __init__(self):
+        return 
+
+    def write_tensorboard_histograms(self, model: nn.Module, iter_count:int, tbwriter: SummaryWriter):
+        for name, param in model.named_parameters():
+            tbwriter.add_histogram('/weights/' + name, param, iter_count)
+    
+
+
 class ModelStatsVisualizer(): 
     def __init__(self):
         return 
 
     def write_tensorboard_stats(self, model: nn.Module, iter_count:int, tbwriter: SummaryWriter):
-        gradients = [x  for x in model.parameters() if x.grad is not None]
+        gradients = [x.grad  for x in model.parameters() if x.grad is not None]
         gradient_nps = [to_np(x.data) for x in gradients]
  
         if len(gradients) == 0:
