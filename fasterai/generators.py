@@ -118,16 +118,31 @@ class Unet34(GeneratorModule):
         self.up3 = UnetBlock(256*nf_factor,64,128*nf_factor)
         self.up4 = UnetBlock(128*nf_factor,64,64*nf_factor)
         self.up5 = UpSampleBlock(64*nf_factor, 32*nf_factor, 2)    
-        self.out= nn.Sequential(ConvBlock(32*nf_factor+3, 3, ks=3, actn=False, bn=False), nn.Tanh())
+        self.out= nn.Sequential(ConvBlock(32*nf_factor, 3, ks=3, actn=False, bn=False), nn.Tanh())
+
+    #Gets around irritating inconsistent halving come from resnet
+    def _pad_xtensor(self, x, target):
+        h = x.shape[2] 
+        w = x.shape[3]
+
+        target_h = target.shape[2]*2
+        target_w = target.shape[3]*2
+
+        if h<target_h or w<target_w:
+            target = Variable(torch.zeros(x.shape[0], x.shape[1], target_h, target_w))
+            target[:,:,:h,:w]=x
+            return to_gpu(target)
+
+        return x
            
     def forward(self, x_in: torch.Tensor):
         x = F.leaky_relu(self.rn(x_in))
-        x = self.up1(x, self.sfs[3].features)
-        x = self.up2(x, self.sfs[2].features)
-        x = self.up3(x, self.sfs[1].features)
-        x = self.up4(x, self.sfs[0].features)
+        x = self.up1(x, self._pad_xtensor(self.sfs[3].features, x))
+        x = self.up2(x, self._pad_xtensor(self.sfs[2].features, x))
+        x = self.up3(x, self._pad_xtensor(self.sfs[1].features, x))
+        x = self.up4(x, self._pad_xtensor(self.sfs[0].features, x))
         x = self.up5(x)
-        x = self.out(torch.cat([x, x_in], dim=1))
+        x = self.out(x)
         return x
     
     def get_layer_groups(self, precompute: bool = False)->[]:

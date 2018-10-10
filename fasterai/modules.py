@@ -166,6 +166,7 @@ class UnetBlock(nn.Module):
     def forward(self, up_p:int, x_p:int):
         up_p = self.tr_conv(up_p)
         x_p = self.x_conv(x_p)
+
         cat_p = torch.cat([up_p,x_p], dim=1)
         out = self.relu(cat_p)
         if bn: out = self.bn(out)
