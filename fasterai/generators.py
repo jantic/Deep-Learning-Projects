@@ -81,7 +81,6 @@ class EDSRImageModifier(GeneratorModule):
         x5 = self.upconv(torch.cat([x, x0, x1, x2, x3, x4], dim=1))
         return self.out(x5)    
 
-
 class MinimalEDSRImageModifier(GeneratorModule):
     def __init__(self, nf=128):
         super().__init__() 
