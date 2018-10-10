@@ -17,8 +17,8 @@ class MatchedFilesDataset(FilesDataset):
 #I learned this the hard way :). 
 def get_matched_image_model_data(image_size: int, batch_size: int, root_data_path: Path, train_root_path: Path, proj_id: str, 
         keep_pct: float=0.1, random_seed: int=42, aug_tfms=[RandomFlip()])->ImageData:
-    train_x_path = generate_image_preprocess_path(train_root_path, is_x=True, size=image_size, uid=proj_id)
-    train_y_path = generate_image_preprocess_path(train_root_path, is_x=False, size=image_size, uid=proj_id)
+    train_x_path = generate_image_preprocess_path(train_root_path, is_x=True, uid=proj_id) 
+    train_y_path = generate_image_preprocess_path(train_root_path, is_x=False, uid=proj_id)
     x_paths, y_paths = get_matched_xy_file_lists(train_x_path, train_y_path)
     x_paths_str = convert_paths_to_str(x_paths)
     y_paths_str = convert_paths_to_str(y_paths)

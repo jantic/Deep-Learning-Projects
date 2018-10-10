@@ -4,46 +4,37 @@ from fastai.conv_learner import *
 from fastai.dataset import *
 from fasterai.wgan import WGANGenTrainingResult, WGANCriticTrainingResult, WGANTrainer
 from fasterai.files import *
+from fasterai.images import *
 from IPython.display import display
 from tensorboardX import SummaryWriter
 import torchvision.utils as vutils
 import shutil
 import statistics
+import cv2
 
-
-class ModelImageSet():
-    @staticmethod
-    def get_list_from_model(ds: FilesDataset, model: nn.Module, idxs:[int]):
-        image_sets = []
-
-        for idx in idxs:
-            x,y=ds[idx]
-            orig_tensor = VV(x[None])
-            real_tensor = V(y[None])
-            gen_tensor = model(orig_tensor)
-            image_set = ModelImageSet(orig_tensor,real_tensor,gen_tensor, ds)
-            image_sets.append(image_set)
-
-        return image_sets  
-
-    def __init__(self, orig_tensor: torch.Tensor, real_tensor: torch.Tensor, gen_tensor: torch.Tensor, ds:FilesDataset):
-        self.orig_ndarray = self._convert_to_denormed_ndarray(orig_tensor.data, ds=ds)
-        self.real_ndarray = self._convert_to_denormed_ndarray(real_tensor.data, ds=ds)
-        self.gen_ndarray = self._convert_to_denormed_ndarray(gen_tensor.data, ds=ds)
-
-        self.orig_tensor = self._convert_to_denormed_tensor(self.orig_ndarray)
-        self.real_tensor = self._convert_to_denormed_tensor(self.real_ndarray)
-        self.gen_tensor = self._convert_to_denormed_tensor(self.gen_ndarray)
-
-    def _convert_to_denormed_ndarray(self, raw_tensor: torch.Tensor, ds:FilesDataset):
-        return ds.denorm(to_np(raw_tensor.data))[0]
-
-    def _convert_to_denormed_tensor(self, denormed_array: ndarray):
-        return V(np.moveaxis(denormed_array,2,0))
 
 class ModelImageVisualizer():
     def __init__(self):
         return 
+
+    def plot_transformed_image(self, path: Path, model: nn.Module, figsize=(10,10), sz:int=None):
+        result = self.get_transformed_image_ndarray(path, model, sz)
+        self.plot_image_from_ndarray(result, figsize=figsize)
+
+    def get_transformed_image_ndarray(self, path: Path, model: nn.Module, sz:int=None):
+        orig = self.get_model_ready_image_ndarray(path, sz)
+        result = model(VV(orig[None])).detach().cpu().numpy()
+        result = np.rollaxis(result,1,4)
+        return result[0]
+
+    def get_model_ready_image_ndarray(self, path: Path, sz:int=None):
+        flags = cv2.IMREAD_UNCHANGED+cv2.IMREAD_ANYDEPTH+cv2.IMREAD_ANYCOLOR
+        im = cv2.imread(path, flags).astype(np.float32)/255
+        im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+        if sz is not None:
+            im = scale_min(im, sz)
+        im = np.moveaxis(im,2,0)
+        return im
 
     def plot_image_from_ndarray(self, image: ndarray, axes:Axes=None, figsize=(20,20)):
         if axes is None: 
@@ -60,8 +51,8 @@ class ModelImageVisualizer():
 
         fig, axes = plt.subplots(rows, columns, figsize=figsize)
         for i, image_set in enumerate(image_sets):
-            self.plot_image_from_ndarray(image_set.orig_ndarray, axes=axes.flat[i*2])
-            self.plot_image_from_ndarray(image_set.gen_ndarray, axes=axes.flat[i*2+1])
+            self.plot_image_from_ndarray(image_set.orig.array, axes=axes.flat[i*2])
+            self.plot_image_from_ndarray(image_set.gen.array, axes=axes.flat[i*2+1])
 
         if immediate_display:
             display(fig)
@@ -150,9 +141,9 @@ class ImageGenVisualizer():
         real_images = []
 
         for image_set in image_sets:
-            orig_images.append(image_set.orig_tensor)
-            gen_images.append(image_set.gen_tensor)
-            real_images.append(image_set.real_tensor)
+            orig_images.append(image_set.orig.tensor)
+            gen_images.append(image_set.gen.tensor)
+            real_images.append(image_set.real.tensor)
 
         tbwriter.add_image('orig images', vutils.make_grid(orig_images, normalize=True), iter_count)
         tbwriter.add_image('gen images', vutils.make_grid(gen_images, normalize=True), iter_count)

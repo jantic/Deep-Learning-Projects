@@ -4,15 +4,15 @@ from fasterai.files import *
 from pathlib import Path
 from itertools import repeat
 from PIL import Image
+from numpy import ndarray
 
-
-def generate_image_preprocess_path(source_path: Path, is_x:bool, size: int, uid: str):
-    name = generate_image_preprocess_name(source_path, is_x, size, uid)
+def generate_image_preprocess_path(source_path: Path, is_x:bool, uid: str):
+    name = generate_image_preprocess_name(source_path, is_x, uid)
     path = source_path.parent/name
     return path
 
-def generate_image_preprocess_name(source_path: Path, is_x:bool, size: int, uid: str):
-   return generate_preprocess_name(source_path, is_x, uid) + '_' + str(size)
+def generate_image_preprocess_name(source_path: Path, is_x:bool, uid: str):
+    return generate_preprocess_name(source_path, is_x, uid)
 
 def transform_image_and_save_new(function, sourcepath: Path, destpath: Path):
     try:
@@ -38,8 +38,48 @@ def transform_images_to_new_directory(function, sourceroot: Path, destroot: Path
         except Exception as ex:
             print(ex)
 
-def resize_image(image: Image, size: int):
-    return image.resize((size,size))
+def resize_image(im: Image, targ: int):
+    r,c = im.size
+    ratio = targ/min(r,c)
+    sz = (scale_to(r, ratio, targ), scale_to(c, ratio, targ))
+    return im.resize(sz, Image.LINEAR)
 
 def to_grayscale_image(image: Image):
     return image.convert('L')
+
+
+class EasyTensorImage():
+    def __init__(self, source_tensor: torch.Tensor, ds:FilesDataset):
+        self.array = self._convert_to_denormed_ndarray(source_tensor.data, ds=ds)   
+        self.tensor = self._convert_to_denormed_tensor(self.array)
+    
+    def _convert_to_denormed_ndarray(self, raw_tensor: torch.Tensor, ds:FilesDataset):
+        return ds.denorm(to_np(raw_tensor.data))[0]
+
+    def _convert_to_denormed_tensor(self, denormed_array: ndarray):
+        return V(np.moveaxis(denormed_array,2,0))
+
+class ModelImageSet():
+    @staticmethod
+    def get_list_from_model(ds: FilesDataset, model: nn.Module, idxs:[int]):
+        image_sets = []
+
+        for idx in idxs:
+            x,y=ds[idx]
+            orig_tensor = VV(x[None])
+            real_tensor = V(y[None])
+            gen_tensor = model(orig_tensor)
+
+            orig_easy = EasyTensorImage(orig_tensor, ds)
+            real_easy = EasyTensorImage(real_tensor, ds)
+            gen_easy = EasyTensorImage(gen_tensor, ds)
+
+            image_set = ModelImageSet(orig_easy,real_easy,gen_easy)
+            image_sets.append(image_set)
+
+        return image_sets  
+
+    def __init__(self, orig: EasyTensorImage, real: EasyTensorImage, gen: EasyTensorImage):
+        self.orig=orig
+        self.real=real
+        self.gen=gen

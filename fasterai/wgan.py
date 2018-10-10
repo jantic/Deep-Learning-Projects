@@ -24,30 +24,29 @@ class CriticModule(ABC, nn.Module):
         pass
 
 class ResCritic(CriticModule): 
-    def _generate_eval_layers(self, ni:int, nf:int, sz:int):
+    def _generate_eval_layers(self, ni:int, nf:int, scale:int):
         layers = [] 
-        min_size = math.log(self.sz,2)
-        csize,cndf = sz,nf
+        cndf = nf
         
         layers.append(ConvBlock(ni, cndf, 7, 1, bn=False))
         layers.append(DownSampleResBlock(ni=cndf, nf=cndf*2, dropout=0.2, bn=False))
-        csize = int(csize//2)
         cndf = cndf*2      
         layers.append(ResBlock(nf=cndf, ks=3, bn=False))
 
-        while csize > min_size:
+        scale_count = 0
+        for i in range(int(math.log(scale,2))-1):
             layers.append(DownSampleResBlock(ni=cndf, nf=cndf*2, bn=False))
             cndf = int(cndf*2)
-            csize = int(csize//2)
+
 
         return nn.Sequential(*layers), cndf
             
-    def __init__(self, sz:int, nf:int=128):
+    def __init__(self, nf:int=64, scale:int=32):
         super().__init__()
-        self.sz = sz
-        self.pixel_eval, nf_mid = self._generate_eval_layers(3, nf, sz)
-        self.mid = ResBlock(nf=nf_mid, ks=3, bn=False)
-        self.out = nn.Conv2d(nf_mid, 1, 1, padding=0, bias=False)
+        assert (math.log(scale,2)).is_integer()
+        self.pixel_eval, nf_mid = self._generate_eval_layers(3, nf, scale)
+        self.mid = ResBlock(nf=nf_mid, ks=3, bn=False) 
+        self.out = nn.Conv2d(nf_mid, 1, kernel_size=1, stride=1, padding=0, bias=False)
         
     def forward(self, input: torch.Tensor):
         p = self.pixel_eval(input)
@@ -61,13 +60,13 @@ class ResCritic(CriticModule):
 
 class DCCritic(CriticModule):
 
-    def _generate_reduce_layers(self, nf:int, sz:int):
+    def _generate_reduce_layers(self, nf:int):
         layers=[]
         layers.append(ConvBlock(nf, nf*2, 4, 2, bn=False))
         layers.append(nn.Dropout2d(0.5))
         return layers
 
-    def __init__(self, ni:int, nf:int, scale:int, sz:int):
+    def __init__(self, ni:int, nf:int, scale:int=32):
         super().__init__()
 
         assert (math.log(scale,2)).is_integer()
@@ -76,27 +75,22 @@ class DCCritic(CriticModule):
             nn.Dropout2d(0.2))
 
         cndf = nf
-        csize = sz//2
-
         mid_layers =  []  
         mid_layers.append(ConvBlock(cndf, cndf, 3, 1, bn=False))
         mid_layers.append(nn.Dropout2d(0.5))
-
         scale_count = 0
 
         for i in range(int(math.log(scale,2))-1):
-            layers = self._generate_reduce_layers(nf=cndf, sz=csize)
+            layers = self._generate_reduce_layers(nf=cndf)
             mid_layers.extend(layers)
             cndf = int(cndf*2)
-            csize = int(csize//2)
    
         self.mid = nn.Sequential(*mid_layers)
-        self.prefinal = nn.Sequential(*self._generate_reduce_layers(nf=cndf, sz=csize))
+        self.prefinal = nn.Sequential(*self._generate_reduce_layers(nf=cndf))
         cndf = int(cndf*2)
-        csize = int(csize//2)
 
         out_layers=[]
-        out_layers.append(nn.Conv2d(cndf, 1, kernel_size=csize, stride=1, padding=0, bias=False))   
+        out_layers.append(nn.Conv2d(cndf, 1, kernel_size=1, stride=1, padding=0, bias=False))   
         self.out = nn.Sequential(*out_layers) 
 
     def get_layer_groups(self)->[]:
