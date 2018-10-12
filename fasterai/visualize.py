@@ -17,14 +17,14 @@ class ModelImageVisualizer():
     def __init__(self):
         return 
 
-    def plot_transformed_image(self, path: Path, model: nn.Module, figsize=(10,10), sz:int=None):
-        result = self.get_transformed_image_ndarray(path, model, sz)
+    def plot_transformed_image(self, path: Path, model: nn.Module, ds:FilesDataset, figsize=(10,10), sz:int=None):
+        result = self.get_transformed_image_ndarray(path, model,ds, sz)
         self.plot_image_from_ndarray(result, figsize=figsize)
 
-    def get_transformed_image_ndarray(self, path: Path, model: nn.Module, sz:int=None):
+    def get_transformed_image_ndarray(self, path: Path, model: nn.Module, ds:FilesDataset, sz:int=None):
         orig = self.get_model_ready_image_ndarray(path, sz)
         result = model(VV(orig[None])).detach().cpu().numpy()
-        result = np.rollaxis(result,1,4)
+        result = ds.denorm(result) 
         return result[0]
 
     def get_model_ready_image_ndarray(self, path: Path, sz:int=None):
@@ -181,10 +181,12 @@ class WganTrainerStatsVisualizer():
         tbwriter.add_scalar('/loss/gcount', gresult.gcount, iter_count)
         tbwriter.add_scalar('/loss/conpenalty', cresult.conpenalty, iter_count)
         tbwriter.add_scalar('/loss/gaddlloss', gresult.gaddlloss, iter_count)
+        tbwriter.add_scalar('/loss/epspenalty', cresult.epspenalty, iter_count)
 
     def print_stats_in_jupyter(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
         print(f'\nWDist {cresult.wdist}; RScore {cresult.dreal}; FScore {cresult.dfake}; GAddlLoss {gresult.gaddlloss}; ' + 
-                f'GCount: {gresult.gcount}; GPenalty: {cresult.gpenalty}; GCost: {gresult.gcost}; ConPenalty: {cresult.conpenalty}')
+                f'GCount: {gresult.gcount}; GPenalty: {cresult.gpenalty}; GCost: {gresult.gcost}; ' + 
+                f'ConPenalty: {cresult.conpenalty}; EpsPenalty: {cresult.epspenalty}')
 
 
 class LearnerStatsVisualizer():

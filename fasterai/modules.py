@@ -4,11 +4,14 @@ from torch.nn.utils.spectral_norm import spectral_norm
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, ni:int, no:int, ks:int=3, stride:int=1, pad:int=None, actn:bool=True, bn:bool=True, bias:bool=True):
+    def __init__(self, ni:int, no:int, ks:int=3, stride:int=1, pad:int=None, actn:bool=True, bn:bool=True, bias:bool=True, sn=False):
         super().__init__()   
         if pad is None: pad = ks//2//stride
 
-        layers = [spectral_norm(nn.Conv2d(ni, no, ks, stride, padding=pad, bias=bias))]
+        if sn:
+            layers = [spectral_norm(nn.Conv2d(ni, no, ks, stride, padding=pad, bias=bias))]
+        else:
+            layers = [nn.Conv2d(ni, no, ks, stride, padding=pad, bias=bias)]
         if actn:
             layers.append(nn.LeakyReLU())
         if bn:
@@ -43,10 +46,8 @@ class ConvPoolMean(nn.Module):
 
 class UpSampleBlock(nn.Module):
     @staticmethod
-    def _conv(ni: int, nf: int, ks: int=3):
-        stride=1
-        pad=ks//2//stride
-        layers = [spectral_norm(nn.Conv2d(ni, nf, kernel_size=ks, padding=pad, stride=stride))]
+    def _conv(ni: int, nf: int, ks: int=3, bn=True, sn=False):
+        layers = [ConvBlock(ni, nf, ks=ks, sn=sn, bn=bn, actn=False)]
         return nn.Sequential(*layers)
 
     @staticmethod
@@ -63,20 +64,20 @@ class UpSampleBlock(nn.Module):
         kernel = kernel.transpose(0, 1)
         return kernel
 
-    def __init__(self, ni:int, nf:int, scale:int=2, ks:int=3, bn:bool=True):
+    def __init__(self, ni:int, nf:int, scale:int=2, ks:int=3, bn:bool=True, sn:bool=False):
         super().__init__()
         layers = []
 
         assert (math.log(scale,2)).is_integer()
 
-        layers += [UpSampleBlock._conv(ni, nf*4, ks=ks), 
+        layers += [UpSampleBlock._conv(ni, nf*4, ks=ks, bn=bn, sn=sn), 
             nn.PixelShuffle(2)]
 
         if bn:
             layers += [nn.BatchNorm2d(nf)]
         
         for i in range(int(math.log(scale//2,2))):
-            layers += [UpSampleBlock._conv(nf, nf*4,ks=ks), 
+            layers += [UpSampleBlock._conv(nf, nf*4,ks=ks, bn=bn, sn=sn), 
                 nn.PixelShuffle(2)]
             if bn:
                 layers += [nn.BatchNorm2d(nf)]
@@ -85,7 +86,7 @@ class UpSampleBlock(nn.Module):
         self._icnr_init()
         
     def _icnr_init(self):
-        conv_shuffle = self.sequence[0][0]
+        conv_shuffle = self.sequence[0][0].seq[0]
         kernel = UpSampleBlock._icnr(conv_shuffle.weight)
         conv_shuffle.weight.data.copy_(kernel)
     
@@ -155,11 +156,11 @@ class DownscaleFilterBlock(nn.Module):
         return x
 
 class UnetBlock(nn.Module):
-    def __init__(self, up_in:int , x_in:int , n_out:int, bn:bool=True):
+    def __init__(self, up_in:int , x_in:int , n_out:int, bn:bool=True, sn:bool=False):
         super().__init__()
         up_out = x_out = n_out//2
-        self.x_conv  = ConvBlock(x_in,  x_out,  ks=1, bn=False, actn=False)
-        self.tr_conv = UpSampleBlock(up_in, up_out, 2, bn=bn)
+        self.x_conv  = ConvBlock(x_in,  x_out,  ks=1, bn=False, actn=False, sn=sn)
+        self.tr_conv = UpSampleBlock(up_in, up_out, 2, bn=bn, sn=sn)
         self.relu = nn.LeakyReLU()
         self.bn = nn.BatchNorm2d(n_out)
         

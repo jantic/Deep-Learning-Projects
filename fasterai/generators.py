@@ -108,17 +108,17 @@ class MinimalEDSRImageModifier(GeneratorModule):
 
 
 class Unet34(GeneratorModule): 
-    def __init__(self, nf_factor:int=1):
+    def __init__(self, nf_factor:int=1, sn=True):
         super().__init__()
         self.rn, self.lr_cut = get_pretrained_resnet_base()
         self.sfs = [SaveFeatures(self.rn[i]) for i in [2,4,5,6]]
 
-        self.up1 = UnetBlock(512,256,512*nf_factor)
-        self.up2 = UnetBlock(512*nf_factor,128,256*nf_factor)
-        self.up3 = UnetBlock(256*nf_factor,64,128*nf_factor)
-        self.up4 = UnetBlock(128*nf_factor,64,64*nf_factor)
-        self.up5 = UpSampleBlock(64*nf_factor, 32*nf_factor, 2)    
-        self.out= nn.Sequential(ConvBlock(32*nf_factor, 3, ks=3, actn=False, bn=False), nn.Tanh())
+        self.up1 = UnetBlock(512,256,256*nf_factor, sn=sn)
+        self.up2 = UnetBlock(256*nf_factor,128,256*nf_factor, sn=sn)
+        self.up3 = UnetBlock(256*nf_factor,64,256*nf_factor, sn=sn)
+        self.up4 = UnetBlock(256*nf_factor,64,256*nf_factor, sn=sn)
+        self.up5 = UpSampleBlock(256*nf_factor, 256*nf_factor, 2, sn=sn)    
+        self.out= nn.Sequential(ConvBlock(256*nf_factor, 3, ks=3, actn=False, bn=False, sn=sn), nn.Tanh())
 
     #Gets around irritating inconsistent halving come from resnet
     def _pad_xtensor(self, x, target):

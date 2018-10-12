@@ -60,37 +60,37 @@ class ResCritic(CriticModule):
 
 class DCCritic(CriticModule):
 
-    def _generate_reduce_layers(self, nf:int):
+    def _generate_reduce_layers(self, nf:int, sn:bool):
         layers=[]
-        layers.append(ConvBlock(nf, nf*2, 4, 2, bn=False))
         layers.append(nn.Dropout2d(0.5))
+        layers.append(ConvBlock(nf, nf*2, 4, 2, bn=False, sn=sn))
         return layers
 
-    def __init__(self, ni:int, nf:int, scale:int=32):
+    def __init__(self, ni:int, nf:int, scale:int=32, sn=False):
         super().__init__()
 
         assert (math.log(scale,2)).is_integer()
         self.initial = nn.Sequential(
-            ConvBlock(ni, nf, 4, 2, bn=False),
+            ConvBlock(ni, nf, 4, 2, bn=False, sn=sn),
             nn.Dropout2d(0.2))
 
         cndf = nf
         mid_layers =  []  
-        mid_layers.append(ConvBlock(cndf, cndf, 3, 1, bn=False))
-        mid_layers.append(nn.Dropout2d(0.5))
+        mid_layers.append(nn.Dropout2d(0.2))
+        mid_layers.append(ConvBlock(cndf, cndf, 3, 1, bn=False, sn=sn))
         scale_count = 0
 
         for i in range(int(math.log(scale,2))-1):
-            layers = self._generate_reduce_layers(nf=cndf)
+            layers = self._generate_reduce_layers(nf=cndf, sn=sn)
             mid_layers.extend(layers)
             cndf = int(cndf*2)
    
         self.mid = nn.Sequential(*mid_layers)
-        self.prefinal = nn.Sequential(*self._generate_reduce_layers(nf=cndf))
+        self.prefinal = nn.Sequential(*self._generate_reduce_layers(nf=cndf, sn=sn))
         cndf = int(cndf*2)
 
         out_layers=[]
-        out_layers.append(nn.Conv2d(cndf, 1, kernel_size=1, stride=1, padding=0, bias=False))   
+        out_layers.append(ConvBlock(cndf, 1, 1, 1, bias=False, bn=False, sn=sn, pad=0, actn=False))
         self.out = nn.Sequential(*out_layers) 
 
     def get_layer_groups(self)->[]:
@@ -109,18 +109,20 @@ class WGANGenTrainingResult():
         self.gaddlloss=gaddlloss
 
 class WGANCriticTrainingResult():
-    def __init__(self, wdist: np.array, gpenalty: np.array, dreal: np.array, dfake: np.array, dcost: np.array, conpenalty: np.array):
+    def __init__(self, wdist: np.array, gpenalty: np.array, dreal: np.array, dfake: np.array, dcost: np.array, 
+            conpenalty: np.array, epspenalty: np.array):
         self.wdist=wdist
         self.gpenalty=gpenalty
         self.dreal=dreal
         self.dfake=dfake
         self.dcost=dcost
         self.conpenalty=conpenalty
+        self.epspenalty=epspenalty
 
 class WGANTrainer():
     def __init__(self, netD: nn.Module, netG: GeneratorModule, md: ImageData, 
             bs:int, sz:int, dpath: Path, gpath: Path, gplambda=10, citers=1, 
-            save_iters=1000, genloss_fns:[]=[]):
+            save_iters=1000, genloss_fns:[]=[], sn=False):
         self.netD = netD
         self.netG = netG
         self.md = md
@@ -134,6 +136,7 @@ class WGANTrainer():
         self._train_begin_hooks = OrderedDict()
         self.genloss_fns = genloss_fns
         self.save_iters=save_iters
+        self.sn = sn
 
     def register_train_loop_hook(self, hook):
         handle = hooks.RemovableHandle(self._train_loop_hooks)
@@ -168,7 +171,7 @@ class WGANTrainer():
 
     def _generate_clr_sched(self, model:nn.Module, use_clr_beta: (int), lrs: [int], cycle_len: int):
         wds = 1e-7
-        opt_fn = partial(optim.Adam, betas=(0.5, 0.9))
+        opt_fn = partial(optim.RMSprop)
         layer_opt = LayerOptimizer(opt_fn, model.get_layer_groups(), lrs, wds)
         div,pct = use_clr_beta[:2]
         moms = use_clr_beta[2:] if len(use_clr_beta) > 3 else None
@@ -268,14 +271,26 @@ class WGANTrainer():
         fake_image = self._create_noise_batch() if noise_gen else self.netG(orig_image)
         wdist, dfake, dreal = self._calculate_wdist(real_image, fake_image)
         self.netD.zero_grad()        
-        gpenalty = self._calc_gradient_penalty(real_image.data, fake_image.data)     
-        conpenalty = self._consistency_penalty(real_image.data)      
-        dcost = dfake - dreal + gpenalty + conpenalty
+
+        if self.sn:
+            gpenalty = V(0)     
+            conpenalty = V(0)  
+            epspenalty = self._calc_epsilon_penalty(dreal)
+            dcost = dfake - dreal + epspenalty
+        else:
+            gpenalty = self._calc_gradient_penalty(real_image.data, fake_image.data)     
+            conpenalty = self._consistency_penalty(real_image.data)    
+            epspenalty = V(0)
+            dcost = dfake - dreal + gpenalty + conpenalty #+ epspenalty
+
         dcost.backward()
         self.critic_sched.layer_opt.opt.step()
         self.critic_sched.on_batch_end(to_np(dcost))
         self.gen_sched.on_batch_end(to_np(-dfake))
-        return WGANCriticTrainingResult(to_np(wdist), to_np(gpenalty), to_np(dreal), to_np(dfake), to_np(dcost), to_np(conpenalty))
+        return WGANCriticTrainingResult(to_np(wdist), to_np(gpenalty), to_np(dreal), to_np(dfake), to_np(dcost), to_np(conpenalty), to_np(epspenalty))
+
+    def _calc_epsilon_penalty(self, dreal: torch.Tensor):
+        return (dreal**2).mean()*0.0001
     
     def _train_generator(self, gcount: int, data_iter: Iterable, pbar: tqdm, cresult: WGANCriticTrainingResult)->WGANGenTrainingResult:
         orig_image, real_image = self._get_next_training_images(data_iter)   
