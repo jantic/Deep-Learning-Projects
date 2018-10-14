@@ -24,34 +24,35 @@ class CriticModule(ABC, nn.Module):
         pass
 
 class ResCritic(CriticModule): 
-    def _generate_eval_layers(self, ni:int, nf:int, scale:int):
+    def _generate_eval_layers(self, nf:int=64, scale:int=32, sn:bool=False):
         layers = [] 
         cndf = nf
-        
-        layers.append(ConvBlock(ni, cndf, 7, 1, bn=False))
-        layers.append(DownSampleResBlock(ni=cndf, nf=cndf*2, dropout=0.2, bn=False))
-        cndf = cndf*2      
-        layers.append(ResBlock(nf=cndf, ks=3, bn=False))
+        layers.append(ResBlock(nf=cndf, ks=3, bn=False, sn=sn, leakyReLu=True))
 
         scale_count = 0
-        for i in range(int(math.log(scale,2))-1):
-            layers.append(DownSampleResBlock(ni=cndf, nf=cndf*2, bn=False))
+        for i in range(int(math.log(scale,2))):
+            layers.append(DownSampleResBlock(ni=cndf, nf=cndf*2, bn=False, sn=sn, leakyReLu=True))
             cndf = int(cndf*2)
 
 
         return nn.Sequential(*layers), cndf
             
-    def __init__(self, nf:int=64, scale:int=32):
+    def __init__(self, ni:int=3, nf:int=64, scale:int=32, sn:bool=False):
         super().__init__()
         assert (math.log(scale,2)).is_integer()
-        self.pixel_eval, nf_mid = self._generate_eval_layers(3, nf, scale)
-        self.mid = ResBlock(nf=nf_mid, ks=3, bn=False) 
-        self.out = nn.Conv2d(nf_mid, 1, kernel_size=1, stride=1, padding=0, bias=False)
+        self.initial = nn.Sequential(
+            FilterScalingBlock(ni, nf, ks=7, dropout=0.2, bn=False, sn=sn, leakyReLu=True))
+
+        self.pixel_eval, nf_mid = self._generate_eval_layers(nf, scale, sn=sn)
+        self.mid = ResBlock(nf=nf_mid, ks=3, bn=False, sn=sn, leakyReLu=True)
+        self.out = ConvBlock(nf_mid, 1, ks=1, stride=1, pad=0, bias=False, actn=False, bn=False, sn=sn, leakyReLu=True) 
         
     def forward(self, input: torch.Tensor):
-        p = self.pixel_eval(input)
-        before_last = self.mid(p)
-        x = self.out(before_last)
+        x = self.initial(input)
+        x = self.pixel_eval(x)
+        x = self.mid(x)
+        before_last = x
+        x = self.out(x)
         return x, before_last
 
     def get_layer_groups(self)->[]:
@@ -60,28 +61,27 @@ class ResCritic(CriticModule):
 
 class DCCritic(CriticModule):
 
-    def _generate_reduce_layers(self, nf:int, sn:bool):
+    def _generate_reduce_layers(self, nf:int, sn:bool, use_attention:bool=False):
         layers=[]
         layers.append(nn.Dropout2d(0.5))
-        layers.append(ConvBlock(nf, nf*2, 4, 2, bn=False, sn=sn))
+        layers.append(ConvBlock(nf, nf*2, 4, 2, bn=False, sn=sn, leakyReLu=True, self_attention=use_attention))
         return layers
 
-    def __init__(self, ni:int, nf:int, scale:int=32, sn=False):
+    def __init__(self, ni:int, nf:int, scale:int=32, sn=False, self_attention=False):
         super().__init__()
 
         assert (math.log(scale,2)).is_integer()
         self.initial = nn.Sequential(
-            ConvBlock(ni, nf, 4, 2, bn=False, sn=sn),
+            ConvBlock(ni, nf, 4, 2, bn=False, sn=sn, leakyReLu=True),
             nn.Dropout2d(0.2))
 
         cndf = nf
         mid_layers =  []  
-        mid_layers.append(nn.Dropout2d(0.2))
-        mid_layers.append(ConvBlock(cndf, cndf, 3, 1, bn=False, sn=sn))
         scale_count = 0
 
         for i in range(int(math.log(scale,2))-1):
-            layers = self._generate_reduce_layers(nf=cndf, sn=sn)
+            use_attention = (i == 1 and self_attention) 
+            layers = self._generate_reduce_layers(nf=cndf, sn=sn, use_attention=use_attention)
             mid_layers.extend(layers)
             cndf = int(cndf*2)
    
@@ -122,7 +122,7 @@ class WGANCriticTrainingResult():
 class WGANTrainer():
     def __init__(self, netD: nn.Module, netG: GeneratorModule, md: ImageData, 
             bs:int, sz:int, dpath: Path, gpath: Path, gplambda=10, citers=1, 
-            save_iters=1000, genloss_fns:[]=[], sn=False):
+            save_iters=1000, genloss_fns:[]=[], sn:bool=False, epsfactor=0.0001):
         self.netD = netD
         self.netG = netG
         self.md = md
@@ -137,6 +137,7 @@ class WGANTrainer():
         self.genloss_fns = genloss_fns
         self.save_iters=save_iters
         self.sn = sn
+        self.epsfactor=epsfactor
 
     def register_train_loop_hook(self, hook):
         handle = hooks.RemovableHandle(self._train_loop_hooks)
@@ -290,7 +291,7 @@ class WGANTrainer():
         return WGANCriticTrainingResult(to_np(wdist), to_np(gpenalty), to_np(dreal), to_np(dfake), to_np(dcost), to_np(conpenalty), to_np(epspenalty))
 
     def _calc_epsilon_penalty(self, dreal: torch.Tensor):
-        return (dreal**2).mean()*0.0001
+        return (dreal**2).mean()*self.epsfactor
     
     def _train_generator(self, gcount: int, data_iter: Iterable, pbar: tqdm, cresult: WGANCriticTrainingResult)->WGANGenTrainingResult:
         orig_image, real_image = self._get_next_training_images(data_iter)   

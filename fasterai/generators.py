@@ -105,17 +105,16 @@ class MinimalEDSRImageModifier(GeneratorModule):
         
     def forward(self, x): 
         return self.out(x)
-
-
+ 
 class Unet34(GeneratorModule): 
-    def __init__(self, nf_factor:int=1, sn=True):
+    def __init__(self, nf_factor:int=1, sn=True, self_attention=False):
         super().__init__()
         self.rn, self.lr_cut = get_pretrained_resnet_base()
         self.sfs = [SaveFeatures(self.rn[i]) for i in [2,4,5,6]]
 
         self.up1 = UnetBlock(512,256,256*nf_factor, sn=sn)
         self.up2 = UnetBlock(256*nf_factor,128,256*nf_factor, sn=sn)
-        self.up3 = UnetBlock(256*nf_factor,64,256*nf_factor, sn=sn)
+        self.up3 = UnetBlock(256*nf_factor,64,256*nf_factor, sn=sn, self_attention=self_attention)
         self.up4 = UnetBlock(256*nf_factor,64,256*nf_factor, sn=sn)
         self.up5 = UpSampleBlock(256*nf_factor, 256*nf_factor, 2, sn=sn)    
         self.out= nn.Sequential(ConvBlock(256*nf_factor, 3, ks=3, actn=False, bn=False, sn=sn), nn.Tanh())
@@ -136,7 +135,7 @@ class Unet34(GeneratorModule):
         return x
            
     def forward(self, x_in: torch.Tensor):
-        x = F.leaky_relu(self.rn(x_in))
+        x = F.relu(self.rn(x_in))
         x = self.up1(x, self._pad_xtensor(self.sfs[3].features, x))
         x = self.up2(x, self._pad_xtensor(self.sfs[2].features, x))
         x = self.up3(x, self._pad_xtensor(self.sfs[1].features, x))
