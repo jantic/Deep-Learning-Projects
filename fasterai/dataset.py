@@ -3,12 +3,31 @@ from fasterai.files import *
 from fasterai.images import *
 
 class MatchedFilesDataset(FilesDataset):
-    def __init__(self, fnames, y, transform, path):
+    def __init__(self, fnames, y, transform, path, x_tfms):
         self.y=y
+        self.x_tfms=x_tfms
         assert(len(fnames)==len(y))
         super().__init__(fnames, transform, path)
+    def get_x(self, i): 
+        x = super().get_x(i)
+        for tfm in self.x_tfms:
+            x,_ = tfm(x, False)
+        return x
     def get_y(self, i): 
         return open_image(os.path.join(self.path, self.y[i]))
+    def get_c(self): 
+        return 0 
+
+class NoiseToImageFilesDataset(FilesDataset):
+    def __init__(self, fnames, y, path, x_tfms=None):
+        self.y=y
+        assert(len(fnames)==len(y))
+        super().__init__(fnames, None, path)
+    def get_y(self, i): 
+        return open_image(os.path.join(self.path, self.y[i]))
+    def get_x(self, i): 
+        raw_random = V(torch.randn(3, self.get_sz(),self.get_sz()).normal_(0, 1))
+        return F.tanh(raw_random)
     def get_c(self): 
         return 0 
 

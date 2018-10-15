@@ -176,17 +176,15 @@ class WganTrainerStatsVisualizer():
         tbwriter.add_scalar('/loss/wdist', cresult.wdist, iter_count)
         tbwriter.add_scalar('/loss/dfake', cresult.dfake, iter_count)
         tbwriter.add_scalar('/loss/dreal', cresult.dreal, iter_count)
-        tbwriter.add_scalar('/loss/gpenalty', cresult.gpenalty, iter_count)
         tbwriter.add_scalar('/loss/gcost', gresult.gcost, iter_count)
-        tbwriter.add_scalar('/loss/gcount', gresult.gcount, iter_count)
-        tbwriter.add_scalar('/loss/conpenalty', cresult.conpenalty, iter_count)
+        tbwriter.add_scalar('/loss/gcount', gresult.iters, iter_count)
         tbwriter.add_scalar('/loss/gaddlloss', gresult.gaddlloss, iter_count)
         tbwriter.add_scalar('/loss/epspenalty', cresult.epspenalty, iter_count)
 
     def print_stats_in_jupyter(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
         print(f'\nWDist {cresult.wdist}; RScore {cresult.dreal}; FScore {cresult.dfake}; GAddlLoss {gresult.gaddlloss}; ' + 
-                f'GCount: {gresult.gcount}; GPenalty: {cresult.gpenalty}; GCost: {gresult.gcost}; ' + 
-                f'ConPenalty: {cresult.conpenalty}; EpsPenalty: {cresult.epspenalty}')
+                f'Iters: {gresult.iters}; GCost: {gresult.gcost}; ' + 
+                f'EpsPenalty: {cresult.epspenalty}')
 
 
 class LearnerStatsVisualizer():

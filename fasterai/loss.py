@@ -37,3 +37,4 @@ class FeatureLoss(nn.Module):
     def close(self):
         for o in self.sfs: o.remove()
 
+
