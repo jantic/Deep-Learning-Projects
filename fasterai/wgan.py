@@ -1,7 +1,7 @@
 from fasterai.modules import *
 from fasterai.generators import *
 from fasterai.loss import *
-from fasterai.dataset import NoiseToImageFilesDataset, MatchedFilesDataset
+from fasterai.dataset import NoiseToImageFilesDataset, MatchedFilesDataset, ImageGenDataLoader
 from torch import autograd
 from collections import Iterable
 import torch.utils.hooks as hooks
@@ -117,7 +117,7 @@ class WGANCriticTrainingResult():
 class WGANTrainSchedule(): 
     @staticmethod
     def generate_schedules(szs:[int], bss:[int], path:Path, keep_pcts:[float], save_base_name:str, 
-        critic_lrs_start:[float], gen_lrs_start:[float], lrs_change_factor:float=1.0, 
+        c_lrs:[float], g_lrs:[float], gen_freeze_tos:[int], lrs_unfreeze_factor:float=0.1, 
         x_noise:bool=False, random_seed=None, x_tfms:[Transform]=[]):
 
         scheds = []
@@ -125,15 +125,17 @@ class WGANTrainSchedule():
         for i in range(len(szs)):
             if random_seed is None:
                 random_seed = datetime.now()
-            sz = szs[i]
+            sz = szs[i] 
             bs = bss[i]
             keep_pct = keep_pcts[i]
-            critic_lrs = critic_lrs_start * (lrs_change_factor**i)
-            gen_lrs = gen_lrs_start * (lrs_change_factor**i)
+            gen_freeze_to = gen_freeze_tos[i]
+            critic_lrs = c_lrs * (lrs_unfreeze_factor if gen_freeze_to == 0 else 1.0)
+            gen_lrs = g_lrs * (lrs_unfreeze_factor if gen_freeze_to == 0 else 1.0)
             critic_save_path = path.parent/(save_base_name + '_critic_' + str(sz) + '.h5')
             gen_save_path = path.parent/(save_base_name + '_gen_' + str(sz) + '.h5')
-            sched = WGANTrainSchedule(sz=sz, bs=bs, path=path, x_tfms=x_tfms, critic_lrs=critic_lrs, gen_lrs=gen_lrs,
-                critic_save_path=critic_save_path, gen_save_path=gen_save_path, x_noise=x_noise, random_seed=random_seed)
+            sched = WGANTrainSchedule(sz=sz, bs=bs, path=path, critic_lrs=critic_lrs, gen_lrs=gen_lrs,
+                critic_save_path=critic_save_path, gen_save_path=gen_save_path, random_seed=random_seed,
+                x_noise=x_noise, keep_pct=keep_pct, x_tfms=x_tfms, gen_freeze_to=gen_freeze_to)
             scheds.append(sched)
         
         return scheds
@@ -141,41 +143,24 @@ class WGANTrainSchedule():
 
     def __init__(self, sz:int, bs:int, path:Path, critic_lrs:[float], gen_lrs:[float],
             critic_save_path: Path, gen_save_path: Path, random_seed=None, x_noise:bool=False, 
-            keep_pct:float=1.0, num_epochs=1, x_tfms:[Transform]=[]):
+            keep_pct:float=1.0, num_epochs=1, x_tfms:[Transform]=[], gen_freeze_to=0):
         self.md = None
+
+        self.data_loader = ImageGenDataLoader(sz=sz, bs=bs, path=path, random_seed=random_seed, x_noise=x_noise,
+            keep_pct=keep_pct, x_tfms=x_tfms)
         self.sz = sz
         self.bs = bs
         self.path = path
-        self.x_tfms = x_tfms
-        self.x_noise = x_noise
-        if random_seed is None:
-            random_seed = datetime.now()
-        self.random_seed = random_seed
-        self.keep_pct = keep_pct
         self.critic_lrs = np.array(critic_lrs)
         self.gen_lrs = np.array(gen_lrs)
         self.critic_save_path = critic_save_path
         self.gen_save_path = gen_save_path
         self.num_epochs=num_epochs
+        self.gen_freeze_to = gen_freeze_to
         
     #Lazy init
     def get_model_data(self):
-        if self.md is not None:
-            return self.md
-
-        fnames_full,label_arr_full,all_labels = folder_source(self.path.parent, self.path.name)
-        fnames_full = ['/'.join(Path(fn).parts[-2:]) for fn in fnames_full]
-        np.random.seed(self.random_seed)
-        keeps = np.random.rand(len(fnames_full)) < self.keep_pct
-        fnames = np.array(fnames_full, copy=False)[keeps]
-        val_idxs = get_cv_idxs(len(fnames), val_pct=min(0.01/self.keep_pct, 0.1))
-        ((val_x,trn_x),(val_y,trn_y)) = split_by_idx(val_idxs, np.array(fnames), np.array(fnames))
-        aug_tfms = [RandomFlip()] 
-        tfms = (tfms_from_stats(inception_stats, self.sz, tfm_y=TfmType.PIXEL, aug_tfms=aug_tfms))
-        dstype = NoiseToImageFilesDataset if self.x_noise else MatchedFilesDataset
-        datasets = ImageData.get_ds(dstype, (trn_x,trn_y), (val_x,val_y), tfms, path=self.path, x_tfms=self.x_tfms)
-        self.md = ImageData(self.path.parent, datasets, self.bs, num_workers=16, classes=None)
-        return self.md
+        return self.data_loader.get_model_data()
 
 class WGANTrainer():
     def __init__(self, netD: nn.Module, netG: GeneratorModule, save_iters=1000, genloss_fns:[]=[], epsfactor=0.0001):
@@ -198,22 +183,32 @@ class WGANTrainer():
         self._train_begin_hooks[handle.id] = hook
         return handle
 
-    def train(self, scheds:[WGANTrainSchedule]):
 
+    def train(self, scheds:[WGANTrainSchedule]):
         for sched in scheds:
             self.md = sched.get_model_data()   
+            self.dpath = sched.critic_save_path
+            self.gpath = sched.gen_save_path
             epochs = sched.num_epochs   
             lrs_gen = sched.gen_lrs
             lrs_critic = sched.critic_lrs
-            self.gen_sched = self._generate_clr_sched(self.netG, use_clr_beta=(1,8), lrs=lrs_gen, cycle_len=1)
-            self.critic_sched = self._generate_clr_sched(self.netD, use_clr_beta=(1,8), lrs=lrs_critic, cycle_len=1)
+
+            if self.iters == 0:
+                self.gen_sched = self._generate_clr_sched(self.netG, use_clr_beta=(1,8), lrs=lrs_gen, cycle_len=1)
+                self.critic_sched = self._generate_clr_sched(self.netD, use_clr_beta=(1,8), lrs=lrs_critic, cycle_len=1)
+                self._call_train_begin_hooks()
+            else:
+                self.gen_sched.init_lrs = lrs_gen
+                self.critic_sched.init_lrs = lrs_critic
+            
+            self.netG.freeze_to(sched.gen_freeze_to)
             self.critic_sched.on_train_begin()
             self.gen_sched.on_train_begin()
         
             for epoch in trange(epochs):
                 self._train_one_epoch()
 
-    def _generate_clr_sched(self, model:nn.Module, use_clr_beta: (int), lrs: [int], cycle_len: int):
+    def _generate_clr_sched(self, model:nn.Module, use_clr_beta: (int), lrs: [float], cycle_len: int):
         wds = 1e-7
         opt_fn = partial(optim.RMSprop)
         layer_opt = LayerOptimizer(opt_fn, model.get_layer_groups(), lrs, wds)
@@ -227,10 +222,10 @@ class WGANTrainer():
         self.netG.train()
         data_iter = iter(self.md.trn_dl)
         n = len(self.md.trn_dl)
-        self._call_train_begin_hooks()
 
         with tqdm(total=n) as pbar:
             while True:
+                self.iters+=1
                 cresult = self._train_critic(data_iter, pbar)
                 
                 if cresult is None:
@@ -295,7 +290,6 @@ class WGANTrainer():
         dcost = dfake - dreal + epspenalty
 
         dcost.backward()
-        self.iters+=1
         self.critic_sched.layer_opt.opt.step()
         self.critic_sched.on_batch_end(to_np(dcost))
         self.gen_sched.on_batch_end(to_np(-dfake))
@@ -322,7 +316,6 @@ class WGANTrainer():
         gaddlloss = self._calc_addl_gen_loss(real_image, fake_image) 
         total_loss = gcost if gaddlloss is None else gcost + gaddlloss
         total_loss.backward()
-        self.iters+=1
         self.gen_sched.layer_opt.opt.step()
         self.critic_sched.on_batch_end(to_np(cresult.dcost))
         self.gen_sched.on_batch_end(to_np(gcost))

@@ -49,7 +49,6 @@ class WganVisualizationHook():
         self.stats_iters = stats_iters
         self.visual_iters = visual_iters
         self.weight_iters = weight_iters
-        self.iter_count = 0
         self.jupyter=jupyter
         self.img_gen_vis = ImageGenVisualizer()
         self.stats_vis = WganTrainerStatsVisualizer()
@@ -63,19 +62,18 @@ class WganVisualizationHook():
         self.graph_vis.write_model_graph_to_tensorboard(ds=ds, model=self.trainer.netG, tbwriter=self.tbwriter) 
 
     def train_loop_hook(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult): 
-        self.iter_count += 1
-        if self.iter_count % self.stats_iters == 0:
+        if self.trainer.iters % self.stats_iters == 0:
             self.stats_vis.print_stats_in_jupyter(gresult, cresult)
-            self.stats_vis.write_tensorboard_stats(gresult, cresult, iter_count=self.iter_count, tbwriter=self.tbwriter) 
+            self.stats_vis.write_tensorboard_stats(gresult, cresult, iter_count=self.trainer.iters, tbwriter=self.tbwriter) 
 
-        if self.iter_count % self.visual_iters == 0:
+        if self.trainer.iters % self.visual_iters == 0:
             ds = self.trainer.md.val_ds
             model = self.trainer.netG
-            self.img_gen_vis.output_image_gen_visuals(ds=ds, model=model, iter_count=self.iter_count, tbwriter=self.tbwriter, jupyter=self.jupyter)
+            self.img_gen_vis.output_image_gen_visuals(ds=ds, model=model, iter_count=self.trainer.iters, tbwriter=self.tbwriter, jupyter=self.jupyter)
 
-        if self.iter_count % self.weight_iters == 0:
-            self.weight_vis.write_tensorboard_histograms(model=self.trainer.netG, iter_count=self.iter_count, tbwriter=self.tbwriter)
-            self.weight_vis.write_tensorboard_histograms(model=self.trainer.netD, iter_count=self.iter_count, tbwriter=self.tbwriter)
+        if self.trainer.iters % self.weight_iters == 0:
+            self.weight_vis.write_tensorboard_histograms(model=self.trainer.netG, iter_count=self.trainer.iters, tbwriter=self.tbwriter)
+            self.weight_vis.write_tensorboard_histograms(model=self.trainer.netD, iter_count=self.trainer.iters, tbwriter=self.tbwriter)
 
     def close(self):
         self.tbwriter.close()

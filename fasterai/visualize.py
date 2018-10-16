@@ -2,6 +2,7 @@ from numpy import ndarray
 from matplotlib.axes import Axes
 from fastai.conv_learner import *
 from fastai.dataset import *
+from fastai.transforms import *
 from fasterai.wgan import WGANGenTrainingResult, WGANCriticTrainingResult, WGANTrainer
 from fasterai.files import *
 from fasterai.images import *
@@ -14,26 +15,33 @@ import cv2
 
 
 class ModelImageVisualizer():
-    def __init__(self):
-        return 
+    def __init__(self, default_sz:int=500):
+        self.default_sz=default_sz 
 
-    def plot_transformed_image(self, path: Path, model: nn.Module, ds:FilesDataset, figsize=(10,10), sz:int=None):
-        result = self.get_transformed_image_ndarray(path, model,ds, sz)
+    def plot_transformed_image(self, path: Path, model: nn.Module, ds:FilesDataset, figsize=(10,10), sz:int=None, tfms:[Transform]=[]):
+        result = self.get_transformed_image_ndarray(path, model,ds, sz, tfms=tfms)
         self.plot_image_from_ndarray(result, figsize=figsize)
 
-    def get_transformed_image_ndarray(self, path: Path, model: nn.Module, ds:FilesDataset, sz:int=None):
-        orig = self.get_model_ready_image_ndarray(path, sz)
-        result = model(VV(orig[None])).detach().cpu().numpy()
-        result = ds.denorm(result) 
+    def get_transformed_image_ndarray(self, path: Path, model: nn.Module, ds:FilesDataset, sz:int=None, tfms:[Transform]=[]):
+        orig = self.get_model_ready_image_ndarray(path, model, ds, sz, tfms)
+        orig = VV(orig[None])
+        result = model(orig).detach().cpu().numpy()
+        #result = np.rollaxis(result,1,4)
+        result = ds.denorm(result)
         return result[0]
 
-    def get_model_ready_image_ndarray(self, path: Path, sz:int=None):
-        flags = cv2.IMREAD_UNCHANGED+cv2.IMREAD_ANYDEPTH+cv2.IMREAD_ANYCOLOR
-        im = cv2.imread(path, flags).astype(np.float32)/255
-        im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
-        if sz is not None:
-            im = scale_min(im, sz)
-        im = np.moveaxis(im,2,0)
+    def _transform(self, orig, tfms:[Transform], model: nn.Module, sz:int):
+        for tfm in tfms:
+            orig,_=tfm(orig, False)
+        _,val_tfms = tfms_from_stats(inception_stats, sz, crop_type=CropType.NO, aug_tfms=[])
+        val_tfms.tfms = [tfm for tfm in val_tfms.tfms if not isinstance(tfm, NoCrop)]
+        return val_tfms(orig)
+
+    def get_model_ready_image_ndarray(self, path: Path, model: nn.Module, ds:FilesDataset, sz:int=None, tfms:[Transform]=[]):
+        im = open_image(str(path))
+        sz = self.default_sz if sz is None else sz
+        im = scale_min(im, sz)
+        im = self._transform(im, tfms, model, sz)
         return im
 
     def plot_image_from_ndarray(self, image: ndarray, axes:Axes=None, figsize=(20,20)):
@@ -160,7 +168,7 @@ class ImageGenVisualizer():
         tbwriter.add_image('real images', vutils.make_grid(real_images, normalize=True), iter_count)
 
 
-    def show_images_in_jupyter(self, image_sets:[ModelImageSet]):
+    def _show_images_in_jupyter(self, image_sets:[ModelImageSet]):
         #TODO:  Parameterize these
         figsize=(20,20)
         max_columns=4
