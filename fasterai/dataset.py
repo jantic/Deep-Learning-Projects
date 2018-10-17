@@ -42,8 +42,6 @@ class ImageGenDataLoader():
         self.path = path
         self.x_tfms = x_tfms
         self.x_noise = x_noise
-        if random_seed is None:
-            random_seed = datetime.now()
         self.random_seed = random_seed
         self.keep_pct = keep_pct
 
@@ -53,7 +51,10 @@ class ImageGenDataLoader():
 
         fnames_full,label_arr_full,all_labels = folder_source(self.path.parent, self.path.name)
         fnames_full = ['/'.join(Path(fn).parts[-2:]) for fn in fnames_full]
-        np.random.seed(self.random_seed)
+        if self.random_seed is None:
+            np.random.seed()
+        else:
+            np.random.seed(self.random_seed)
         keeps = np.random.rand(len(fnames_full)) < self.keep_pct
         fnames = np.array(fnames_full, copy=False)[keeps]
         val_idxs = get_cv_idxs(len(fnames), val_pct=min(0.01/self.keep_pct, 0.1))
