@@ -123,8 +123,6 @@ class WGANTrainSchedule():
         scheds = []
 
         for i in range(len(szs)):
-            if random_seed is None:
-                random_seed = datetime.now()
             sz = szs[i] 
             bs = bss[i]
             keep_pct = keep_pcts[i]
