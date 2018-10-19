@@ -105,6 +105,35 @@ class MinimalEDSRImageModifier(GeneratorModule):
         
     def forward(self, x): 
         return self.out(x)
+
+class DCGenerator(GeneratorModule):
+    def __init__(self, x_noise:int=64, nf:int=64, scale:int=64, sn=False, self_attention=False):
+        super().__init__()
+        cngf = nf//2
+        for i in range(int(math.log(scale,2))):
+            cngf*=2
+
+        layers = [DeconvBlock(x_noise, cngf, 4, 1, 0, sn=sn)]
+        scale_count = 0
+        cndf = cngf
+        
+        for i in range(int(math.log(scale,2))-3):
+            use_attention = (i == 1 and self_attention) 
+            layers.append(DeconvBlock(cngf, cngf//2, 4, 2, 1, sn=sn, self_attention=use_attention))
+            cngf //= 2
+
+        out = nn.ConvTranspose2d(cngf, 3, 4, 2, 1, bias=False)
+        if sn:
+            out = spectral_norm(out)
+        layers.append(out)
+        self.features = nn.Sequential(*layers)
+        self.out = nn.Tanh()
+
+    def get_layer_groups(self, precompute: bool = False)->[]:
+        return [children(self)]
+
+    def forward(self, input): 
+        return self.out(self.features(input))
  
 class Unet34(GeneratorModule): 
     def __init__(self, nf_factor:int=1, sn=True, self_attention=False):

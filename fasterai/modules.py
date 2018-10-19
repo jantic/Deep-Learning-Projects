@@ -47,6 +47,30 @@ class ConvPoolMean(nn.Module):
         output = (output[:,:,::2,::2] + output[:,:,1::2,::2] + output[:,:,::2,1::2] + output[:,:,1::2,1::2]) / 4
         return output
 
+class DeconvBlock(nn.Module):
+    def __init__(self, ni:int, no:int, ks:int, stride:int, pad:int, bn:bool=True, 
+            sn:bool=False, leakyReLu:bool=False, self_attention:bool=False):
+        super().__init__()
+
+        layers=[]
+
+        conv = nn.ConvTranspose2d(ni, no, ks, stride, padding=pad, bias=False)
+        if sn: 
+            conv = spectral_norm(conv)
+        layers.append(conv)
+        if bn:
+            layers.append(nn.BatchNorm2d(no))
+        if leakyReLu:
+            layers.append(nn.LeakyReLU(0.2))
+        else:
+            layers.append(nn.ReLU())
+        if self_attention:
+            layers.append(SelfAttention(no, 1))
+        self.out=nn.Sequential(*layers)
+        
+    def forward(self, x):
+        return self.out(x)
+
 class UpSampleBlock(nn.Module):
     @staticmethod
     def _conv(ni: int, nf: int, ks: int=3, bn=True, sn=False, leakyReLu:bool=False):

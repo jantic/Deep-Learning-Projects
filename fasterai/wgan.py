@@ -1,13 +1,13 @@
 from fasterai.modules import *
 from fasterai.generators import *
 from fasterai.loss import *
-from fasterai.dataset import NoiseToImageFilesDataset, MatchedFilesDataset, ImageGenDataLoader
+from fasterai.dataset import NoiseVectorToImageDataset, MatchedFilesDataset, ImageGenDataLoader
 from torch import autograd
 from collections import Iterable
 import torch.utils.hooks as hooks
 from torch.nn.utils.spectral_norm import spectral_norm
 from datetime import datetime
-
+ 
 
 class CriticModule(ABC, nn.Module):
     def __init__(self):
@@ -53,8 +53,7 @@ class ResCritic(CriticModule):
         x = self.initial(input)
         x = self.pixel_eval(x)
         x = self.mid(x)
-        x = self.out(x)
-        return x
+        return self.out(x), x
 
     def get_layer_groups(self)->[]:
         return [children(self)]
@@ -68,17 +67,18 @@ class DCCritic(CriticModule):
         layers.append(ConvBlock(nf, nf*2, 4, 2, bn=False, sn=sn, leakyReLu=True, self_attention=use_attention))
         return layers
 
-    def __init__(self, ni:int, nf:int, scale:int=32, sn=True, self_attention=False):
+    def __init__(self, ni:int=3, nf:int=64, scale:int=32, sn=False, self_attention=False):
         super().__init__()
 
         assert (math.log(scale,2)).is_integer()
         self.initial = nn.Sequential(
             ConvBlock(ni, nf, 4, 2, bn=False, sn=sn, leakyReLu=True),
-            nn.Dropout2d(0.2))
+            nn.Dropout2d(0.2),
+            ConvBlock(nf, nf, 3, 1, bn=False, sn=sn, leakyReLu=True)
+        )
 
         cndf = nf
         mid_layers =  []  
-        scale_count = 0
 
         for i in range(int(math.log(scale,2))-1):
             use_attention = (i == 1 and self_attention) 
@@ -88,7 +88,7 @@ class DCCritic(CriticModule):
    
         self.mid = nn.Sequential(*mid_layers)
         out_layers=[]
-        out_layers.append(ConvBlock(cndf, 1, 1, 1, bias=False, bn=False, sn=sn, pad=0, actn=False))
+        out_layers.append(ConvBlock(cndf, 1, ks=4, stride=1, bias=False, bn=False, sn=sn, pad=0, actn=False))
         self.out = nn.Sequential(*out_layers) 
 
     def get_layer_groups(self)->[]:
@@ -97,7 +97,8 @@ class DCCritic(CriticModule):
     def forward(self, input):
         x=self.initial(input)
         x=self.mid(x)
-        return self.out(x)
+        return self.out(x), x
+
 
 class WGANGenTrainingResult():
     def __init__(self, gcost: np.array, iters: int, gaddlloss: np.array):
@@ -106,19 +107,21 @@ class WGANGenTrainingResult():
         self.gaddlloss=gaddlloss
 
 class WGANCriticTrainingResult():
-    def __init__(self, wdist: np.array, dreal: np.array, dfake: np.array, dcost: np.array, epspenalty: np.array):
+    def __init__(self, wdist: np.array, gpenalty: np.array, dreal: np.array, dfake: np.array, dcost: np.array, 
+            conpenalty: np.array):
         self.wdist=wdist
+        self.gpenalty=gpenalty
         self.dreal=dreal
         self.dfake=dfake
         self.dcost=dcost
-        self.epspenalty=epspenalty
+        self.conpenalty=conpenalty
 
 
 class WGANTrainSchedule(): 
     @staticmethod
     def generate_schedules(szs:[int], bss:[int], path:Path, keep_pcts:[float], save_base_name:str, 
         c_lrs:[float], g_lrs:[float], gen_freeze_tos:[int], lrs_unfreeze_factor:float=0.1, 
-        x_noise:bool=False, random_seed=None, x_tfms:[Transform]=[]):
+        x_noise:int=None, random_seed=None, x_tfms:[Transform]=[]):
 
         scheds = []
 
@@ -140,7 +143,7 @@ class WGANTrainSchedule():
 
 
     def __init__(self, sz:int, bs:int, path:Path, critic_lrs:[float], gen_lrs:[float],
-            critic_save_path: Path, gen_save_path: Path, random_seed=None, x_noise:bool=False, 
+            critic_save_path: Path, gen_save_path: Path, random_seed=None, x_noise:int=None, 
             keep_pct:float=1.0, num_epochs=1, x_tfms:[Transform]=[], gen_freeze_to=0):
         self.md = None
 
@@ -161,15 +164,16 @@ class WGANTrainSchedule():
         return self.data_loader.get_model_data()
 
 class WGANTrainer():
-    def __init__(self, netD: nn.Module, netG: GeneratorModule, save_iters=1000, genloss_fns:[]=[], epsfactor=0.0001):
+    def __init__(self, netD: nn.Module, netG: GeneratorModule, save_iters=1000, genloss_fns:[]=[], sn:bool=False):
         self.netD = netD
         self.netG = netG
         self._train_loop_hooks = OrderedDict()
         self._train_begin_hooks = OrderedDict()
         self.genloss_fns = genloss_fns
         self.save_iters=save_iters
-        self.epsfactor=epsfactor
         self.iters = 0
+        self.gplambda = 10
+        self.sn=sn
 
     def register_train_loop_hook(self, hook):
         handle = hooks.RemovableHandle(self._train_loop_hooks)
@@ -208,7 +212,7 @@ class WGANTrainer():
 
     def _generate_clr_sched(self, model:nn.Module, use_clr_beta: (int), lrs: [float], cycle_len: int):
         wds = 1e-7
-        opt_fn = partial(optim.RMSprop)
+        opt_fn = partial(optim.Adam, betas=(0.0,0.9))
         layer_opt = LayerOptimizer(opt_fn, model.get_layer_groups(), lrs, wds)
         div,pct = use_clr_beta[:2]
         moms = use_clr_beta[2:] if len(use_clr_beta) > 3 else None
@@ -255,8 +259,6 @@ class WGANTrainer():
 
     def _get_next_training_images(self, data_iter: Iterable)->(torch.Tensor,torch.Tensor):
         x, y = next(data_iter, (None, None))
-        if x is None:
-            return (None, None)
         orig_image = V(x)
         real_image = V(y) 
         return (orig_image, real_image)
@@ -274,33 +276,77 @@ class WGANTrainer():
         orig_image, real_image = self._get_next_training_images(data_iter)
         if orig_image is None:
             return None
-        cresult = self._train_critic_once(orig_image, real_image)
+
+        if self.sn:
+            cresult = self._train_critic_once_sn(orig_image, real_image)
+        else:
+            cresult = self._train_critic_once_wgan(orig_image, real_image)
         pbar.update()
         return cresult
 
-    def _train_critic_once(self, orig_image: torch.Tensor, real_image: torch.Tensor)->WGANCriticTrainingResult:                     
+    def _train_critic_once_sn(self, orig_image: torch.Tensor, real_image: torch.Tensor)->WGANCriticTrainingResult:                     
         #Higher == Real
         fake_image = self.netG(orig_image)
-        wdist, dfake, dreal = self._calculate_wdist(real_image, fake_image)
+        dfake_raw,_ = self.netD(fake_image)
+        dfake = torch.nn.ReLU()(1.0+dfake_raw).mean()
+        dreal_raw,_ = self.netD(real_image)
+        dreal = torch.nn.ReLU()(1.0-dreal_raw).mean()
         self.netD.zero_grad()    
-
-        epspenalty = self._calc_epsilon_penalty(dreal)
-        dcost = dfake - dreal + epspenalty
-
+        gpenalty = VV(0)     
+        conpenalty = VV(0)   
+        dcost = dfake + dreal
         dcost.backward()
         self.critic_sched.layer_opt.opt.step()
         self.critic_sched.on_batch_end(to_np(dcost))
         self.gen_sched.on_batch_end(to_np(-dfake))
-        return WGANCriticTrainingResult(to_np(wdist), to_np(dreal), to_np(dfake), to_np(dcost), to_np(epspenalty))
+        return WGANCriticTrainingResult(to_np(dcost), to_np(gpenalty), to_np(dreal), to_np(dfake), to_np(dcost), to_np(conpenalty))
 
-    def _calc_epsilon_penalty(self, dreal: torch.Tensor):
-        return (dreal**2).mean()*self.epsfactor
+    def _train_critic_once_wgan(self, orig_image: torch.Tensor, real_image: torch.Tensor)->WGANCriticTrainingResult:                     
+        #Higher == Real
+        fake_image = self.netG(orig_image)
+        wdist, dfake, dreal = self._calculate_wdist(real_image, fake_image)
+        self.netD.zero_grad()    
+        gpenalty = self._calc_gradient_penalty(real_image.data, fake_image.data)     
+        conpenalty = self._consistency_penalty(real_image.data)    
+        dcost = dfake - dreal + gpenalty + conpenalty
+        dcost.backward()
+        self.critic_sched.layer_opt.opt.step()
+        self.critic_sched.on_batch_end(to_np(dcost))
+        self.gen_sched.on_batch_end(to_np(-dfake))
+        return WGANCriticTrainingResult(to_np(wdist), to_np(gpenalty), to_np(dreal), to_np(dfake), to_np(dcost), to_np(conpenalty))
+
+    def _calc_gradient_penalty(self, real_data: torch.Tensor, fake_data: torch.Tensor)->torch.Tensor:
+        bs = real_data.shape[0]
+        sz = real_data.shape[2]
+        alpha = torch.rand(bs, 1)
+        alpha = alpha.expand(bs, real_data.nelement()//bs).contiguous().view(bs, 3, sz, sz)
+        alpha = alpha.cuda()
+        differences = fake_data - real_data
+        interpolates = real_data + (alpha*differences)
+        interpolates = interpolates.cuda()
+        interpolates = autograd.Variable(interpolates, requires_grad=True)
+        disc_interpolates = self._get_dscore(interpolates)
+        gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
+            grad_outputs=torch.ones(disc_interpolates.size()).cuda(),
+            create_graph=True, retain_graph=True, only_inputs=True)[0]
+        gradients = gradients.view(gradients.size(0), -1)
+        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * self.gplambda
+        return gradient_penalty
+
+    def _consistency_penalty(self, real_data: torch.Tensor):
+        d1, d_1 = self.netD(real_data)
+        d2, d_2 = self.netD(real_data)
+        consistency_term = (d1 - d2).norm(2, dim=1) + 0.1 * (d_1 - d_2).norm(2, dim=1)
+        return consistency_term.mean() 
+        return total_loss 
     
     def _train_generator(self, data_iter: Iterable, pbar: tqdm, cresult: WGANCriticTrainingResult)->WGANGenTrainingResult:
         orig_image, real_image = self._get_next_training_images(data_iter)   
         if orig_image is None:
             return None
-        gresult = self._train_generator_once(orig_image, real_image, cresult)       
+
+        gresult = self._train_generator_once(orig_image, real_image, cresult) 
+    
         pbar.update() 
         return gresult
 
@@ -319,18 +365,21 @@ class WGANTrainer():
         self.gen_sched.on_batch_end(to_np(gcost))
         return WGANGenTrainingResult(to_np(gcost), self.iters, to_np(gaddlloss))
 
+
     def _save_if_applicable(self):
         if self.iters % self.save_iters == 0:
             save_model(self.netD, self.dpath)
             save_model(self.netG, self.gpath)
 
     def _get_dscore(self, new_image: torch.Tensor):
-        scores = self.netD(new_image)
+        scores, _ = self.netD(new_image)
         return scores.mean()
+    
+
 
     def _calc_addl_gen_loss(self, real_data: torch.Tensor, fake_data: torch.Tensor)->torch.Tensor:
-        total_loss = None
+        total_loss = V(0.0)
         for loss_fn in self.genloss_fns:
             loss = loss_fn(fake_data, real_data)
-            total_loss = loss if total_loss is None else total_loss + loss
+            total_loss = total_loss + loss
         return total_loss

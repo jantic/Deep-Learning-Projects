@@ -26,7 +26,6 @@ class ModelImageVisualizer():
         orig = self.get_model_ready_image_ndarray(path, model, ds, sz, tfms)
         orig = VV(orig[None])
         result = model(orig).detach().cpu().numpy()
-        #result = np.rollaxis(result,1,4)
         result = ds.denorm(result)
         return result[0]
 
@@ -187,12 +186,12 @@ class WganTrainerStatsVisualizer():
         tbwriter.add_scalar('/loss/gcost', gresult.gcost, iter_count)
         tbwriter.add_scalar('/loss/gcount', gresult.iters, iter_count)
         tbwriter.add_scalar('/loss/gaddlloss', gresult.gaddlloss, iter_count)
-        tbwriter.add_scalar('/loss/epspenalty', cresult.epspenalty, iter_count)
+        tbwriter.add_scalar('/loss/gpenalty', cresult.gpenalty, iter_count)
+        tbwriter.add_scalar('/loss/conpenalty', cresult.conpenalty, iter_count)
 
     def print_stats_in_jupyter(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
         print(f'\nWDist {cresult.wdist}; RScore {cresult.dreal}; FScore {cresult.dfake}; GAddlLoss {gresult.gaddlloss}; ' + 
-                f'Iters: {gresult.iters}; GCost: {gresult.gcost}; ' + 
-                f'EpsPenalty: {cresult.epspenalty}')
+                f'Iters: {gresult.iters}; GCost: {gresult.gcost}; GPenalty: {cresult.gpenalty}; ConPenalty: {cresult.conpenalty}')
 
 
 class LearnerStatsVisualizer():
