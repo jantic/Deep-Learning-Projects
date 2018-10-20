@@ -81,7 +81,7 @@ class DCCritic(CriticModule):
         mid_layers =  []  
 
         for i in range(int(math.log(scale,2))-1):
-            use_attention = (i == 1 and self_attention) 
+            use_attention = (i == 0 and self_attention) 
             layers = self._generate_reduce_layers(nf=cndf, sn=sn, use_attention=use_attention)
             mid_layers.extend(layers)
             cndf = int(cndf*2)
@@ -259,6 +259,10 @@ class WGANTrainer():
 
     def _get_next_training_images(self, data_iter: Iterable)->(torch.Tensor,torch.Tensor):
         x, y = next(data_iter, (None, None))
+
+        if x is None or y is None:
+            return (None,None)
+
         orig_image = V(x)
         real_image = V(y) 
         return (orig_image, real_image)

@@ -36,8 +36,10 @@ class NoiseVectorToImageDataset(FilesDataset):
 
 
 class ImageGenDataLoader():
+    md_cache = {}
+
     def __init__(self, sz:int, bs:int, path:Path, random_seed=None, x_noise:int=None, 
-            keep_pct:float=1.0, x_tfms:[Transform]=[], file_ext='jpg'):
+            keep_pct:float=1.0, x_tfms:[Transform]=[], file_exts=('jpg','jpeg','png')):
         
         self.md = None
         self.sz = sz
@@ -47,16 +49,22 @@ class ImageGenDataLoader():
         self.x_noise = x_noise
         self.random_seed = random_seed
         self.keep_pct = keep_pct
-        self.file_ext = file_ext
+        self.file_exts = file_exts
 
     def get_model_data(self):
         if self.md is not None:
             return self.md
 
-        #fnames_full,label_arr_full,all_labels = folder_source(self.path.parent, self.path.name)
-        #fnames_full = ['/'.join(Path(fn).parts[-2:]) for fn in fnames_full]
-        fnames_full = [str(path) for path in self.path.glob('**/*.' + self.file_ext)]
-        fnames_full = [Path(fname.replace(str(self.path) + '/','')) for fname in fnames_full]
+        cache_key = str(self.path) + str(self.sz)
+        if cache_key in ImageGenDataLoader.md_cache:
+            self.md = md
+            return ImageGenDataLoader.md_cache[cache_key]
+
+        resize_folder = 'tmp'
+        exclude_str = '/' + resize_folder + '/'
+        paths = find_files_recursively(self.path,self.file_exts) 
+        paths = filter(lambda path: not re.search(exclude_str, str(path)), paths)
+        fnames_full = [Path(str(fname).replace(str(self.path) + '/','')) for fname in paths] 
 
         if self.random_seed is None:
             np.random.seed()
@@ -70,9 +78,17 @@ class ImageGenDataLoader():
         tfms = (tfms_from_stats(inception_stats, self.sz, tfm_y=TfmType.PIXEL, aug_tfms=aug_tfms))
         dstype = NoiseVectorToImageDataset if self.x_noise is not None else MatchedFilesDataset
         datasets = ImageData.get_ds(dstype, (trn_x,trn_y), (val_x,val_y), tfms, path=self.path, x_tfms=self.x_tfms, x_noise=self.x_noise)
-        self.md = ImageData(self.path.parent, datasets, self.bs, num_workers=16, classes=None)
+        resize_path = os.path.join(self.path,resize_folder,str(self.sz*2))
 
         #optimization
-        #if self.sz<128:
-            #self.md = self.md.resize(self.sz*2)
+        if os.path.exists(os.path.join(resize_path,fnames[0])):
+            self.md = ImageData(Path(resize_path), datasets, self.bs, num_workers=16, classes=None)
+        else:
+            self.md = ImageData(self.path.parent, datasets, self.bs, num_workers=16, classes=None)
+            if self.sz<256: 
+                self.md = self.md.resize(self.sz*2, new_path=resize_folder)
+
+        ImageGenDataLoader.md_cache[cache_key] = self.md
         return self.md
+
+    

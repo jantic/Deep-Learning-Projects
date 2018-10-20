@@ -116,9 +116,10 @@ class DCGenerator(GeneratorModule):
         layers = [DeconvBlock(x_noise, cngf, 4, 1, 0, sn=sn)]
         scale_count = 0
         cndf = cngf
+        num_layers = int(math.log(scale,2))-3
         
-        for i in range(int(math.log(scale,2))-3):
-            use_attention = (i == 1 and self_attention) 
+        for i in range(num_layers):
+            use_attention = (i == num_layers-2) and self_attention
             layers.append(DeconvBlock(cngf, cngf//2, 4, 2, 1, sn=sn, self_attention=use_attention))
             cngf //= 2
 
