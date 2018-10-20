@@ -56,8 +56,6 @@ class EasyTensorImage():
     
     def _convert_to_denormed_ndarray(self, raw_tensor: torch.Tensor, ds:FilesDataset):
         raw_array = raw_tensor.clone().data.cpu().numpy()
-
-        #Just return 1 pixel image
         if raw_array.shape[1] != 3:
             array = np.zeros((3, 1, 1))
             return array
@@ -101,7 +99,7 @@ class ModelImageSet():
 
     @staticmethod
     def _is_random_vector(x):
-        return x.shape[2] != 3
+        return x.shape[0] != 3
 
     def __init__(self, orig: EasyTensorImage, real: EasyTensorImage, gen: EasyTensorImage):
         self.orig=orig

@@ -37,7 +37,7 @@ class ModelVisualizationHook():
 
 class WganVisualizationHook():
     def __init__(self, base_dir: Path, trainer: WGANTrainer, name: str, stats_iters: int=10, 
-            visual_iters: int=100, weight_iters: int=25, jupyter:bool=False):
+            visual_iters: int=200, weight_iters: int=1000, jupyter:bool=False):
         super().__init__()
         self.base_dir = base_dir
         self.name = name
