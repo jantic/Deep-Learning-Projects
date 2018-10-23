@@ -67,9 +67,9 @@ class WganVisualizationHook():
             self.stats_vis.write_tensorboard_stats(gresult, cresult, iter_count=self.trainer.iters, tbwriter=self.tbwriter) 
 
         if self.trainer.iters % self.visual_iters == 0:
-            ds = self.trainer.md.val_ds
             model = self.trainer.netG
-            self.img_gen_vis.output_image_gen_visuals(ds=ds, model=model, iter_count=self.trainer.iters, tbwriter=self.tbwriter, jupyter=self.jupyter)
+            self.img_gen_vis.output_image_gen_visuals(md=self.trainer.md, model=model, iter_count=self.trainer.iters, 
+                tbwriter=self.tbwriter, jupyter=self.jupyter)
 
         if self.trainer.iters % self.weight_iters == 0:
             self.weight_vis.write_tensorboard_histograms(model=self.trainer.netG, iter_count=self.trainer.iters, tbwriter=self.tbwriter)
@@ -138,7 +138,7 @@ class ModelVisualizationCallback(Callback):
         self.learner_vis.write_tensorboard_stats(metrics=metrics, iter_count=self.iter_count, tbwriter=self.tbwriter) 
 
     def output_visuals(self):
-        self.img_gen_vis.output_image_gen_visuals(ds=self.md.val_ds, model=self.model, iter_count=self.iter_count, 
+        self.img_gen_vis.output_image_gen_visuals(md=self.md, model=self.model, iter_count=self.iter_count, 
                 tbwriter=self.tbwriter, jupyter=self.jupyter)
 
     def output_weights(self):
@@ -154,5 +154,5 @@ class ImageGenVisualizationCallback(ModelVisualizationCallback):
 
     def output_visuals(self):
         super().output_visuals()
-        self.img_gen_vis.output_image_gen_visuals(ds=self.md.val_ds, model=self.model, iter_count=self.iter_count, 
+        self.img_gen_vis.output_image_gen_visuals(md=self.md, model=self.model, iter_count=self.iter_count, 
                 tbwriter=self.tbwriter, jupyter=self.jupyter)

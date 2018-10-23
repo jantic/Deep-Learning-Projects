@@ -97,17 +97,13 @@ class UpSampleBlock(nn.Module):
 
         assert (math.log(scale,2)).is_integer()
 
-        layers += [UpSampleBlock._conv(ni, nf*4, ks=ks, bn=bn, sn=sn, leakyReLu=leakyReLu), 
-            nn.PixelShuffle(2)]
-
-        if bn:
-            layers += [nn.BatchNorm2d(nf)]
-        
-        for i in range(int(math.log(scale//2,2))):
-            layers += [UpSampleBlock._conv(nf, nf*4,ks=ks, bn=bn, sn=sn, leakyReLu=leakyReLu), 
+        for i in range(int(math.log(scale,2))):
+            layers += [UpSampleBlock._conv(ni, nf*4,ks=ks, bn=bn, sn=sn, leakyReLu=leakyReLu), 
                 nn.PixelShuffle(2)]
             if bn:
                 layers += [nn.BatchNorm2d(nf)]
+
+            ni = nf
                        
         self.sequence = nn.Sequential(*layers)
         self._icnr_init()
@@ -181,7 +177,8 @@ class FilterScalingBlock(nn.Module):
         return x 
 
 class UnetBlock(nn.Module):
-    def __init__(self, up_in:int , x_in:int , n_out:int, bn:bool=True, sn:bool=False, leakyReLu:bool=False, self_attention:bool=False):
+    def __init__(self, up_in:int , x_in:int , n_out:int, bn:bool=True, sn:bool=False, leakyReLu:bool=False, 
+        self_attention:bool=False):
         super().__init__()
         up_out = x_out = n_out//2
         self.x_conv  = ConvBlock(x_in,  x_out,  ks=1, bn=False, actn=False, sn=sn)

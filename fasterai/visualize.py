@@ -34,7 +34,8 @@ class ModelImageVisualizer():
             orig,_=tfm(orig, False)
         _,val_tfms = tfms_from_stats(inception_stats, sz, crop_type=CropType.NO, aug_tfms=[])
         val_tfms.tfms = [tfm for tfm in val_tfms.tfms if not isinstance(tfm, NoCrop)]
-        return val_tfms(orig)
+        orig = val_tfms(orig)
+        return orig
 
     def get_model_ready_image_ndarray(self, path: Path, model: nn.Module, ds:FilesDataset, sz:int=None, tfms:[Transform]=[]):
         im = open_image(str(path))
@@ -51,12 +52,15 @@ class ModelImageVisualizer():
         axes.axis('off')
 
 
-    def plot_images_from_image_sets(self, image_sets: [ModelImageSet], figsize=(20,20), max_columns=6, immediate_display=True):
+    def plot_images_from_image_sets(self, image_sets: [ModelImageSet], validation:bool, figsize=(20,20), max_columns=6, immediate_display=True):
         num_sets = len(image_sets)
         num_images = num_sets * 2
         rows, columns = self._get_num_rows_columns(num_images, max_columns)
 
         fig, axes = plt.subplots(rows, columns, figsize=figsize)
+        title = 'Validation' if validation else 'Training'
+        fig.suptitle(title, fontsize=16)
+
         for i, image_set in enumerate(image_sets):
             self.plot_image_from_ndarray(image_set.orig.array, axes=axes.flat[i*2])
             self.plot_image_from_ndarray(image_set.gen.array, axes=axes.flat[i*2+1])
@@ -141,18 +145,23 @@ class ImageGenVisualizer():
     def __init__(self):
         self.model_vis = ModelImageVisualizer()
 
-    def output_image_gen_visuals(self, ds: FilesDataset, model: nn.Module, iter_count:int, tbwriter: SummaryWriter, jupyter:bool=False):
+    def output_image_gen_visuals(self, md: ImageData, model: nn.Module, iter_count:int, tbwriter: SummaryWriter, jupyter:bool=False):
+        self._output_visuals(ds=md.val_ds, model=model, iter_count=iter_count, tbwriter=tbwriter, jupyter=jupyter, validation=True)
+        self._output_visuals(ds=md.trn_ds, model=model, iter_count=iter_count, tbwriter=tbwriter, jupyter=jupyter, validation=False)
+
+    def _output_visuals(self, ds: FilesDataset, model: nn.Module, iter_count:int, tbwriter: SummaryWriter, 
+            validation:bool, jupyter:bool=False):
         #TODO:  Parameterize these
         start_idx=0
         count = 8
         end_index = start_idx + count
         idxs = list(range(start_idx,end_index))
         image_sets = ModelImageSet.get_list_from_model(ds=ds, model=model, idxs=idxs)
-        self.write_tensorboard_images(image_sets=image_sets, iter_count=iter_count, tbwriter=tbwriter)
+        self._write_tensorboard_images(image_sets=image_sets, iter_count=iter_count, tbwriter=tbwriter, validation=validation)
         if jupyter:
-            self._show_images_in_jupyter(image_sets)
+            self._show_images_in_jupyter(image_sets, validation=validation)
     
-    def write_tensorboard_images(self, image_sets:[ModelImageSet], iter_count:int, tbwriter: SummaryWriter):
+    def _write_tensorboard_images(self, image_sets:[ModelImageSet], iter_count:int, tbwriter: SummaryWriter, validation:bool):
         orig_images = []
         gen_images = []
         real_images = []
@@ -162,17 +171,20 @@ class ImageGenVisualizer():
             gen_images.append(image_set.gen.tensor)
             real_images.append(image_set.real.tensor)
 
-        tbwriter.add_image('orig images', vutils.make_grid(orig_images, normalize=True), iter_count)
-        tbwriter.add_image('gen images', vutils.make_grid(gen_images, normalize=True), iter_count)
-        tbwriter.add_image('real images', vutils.make_grid(real_images, normalize=True), iter_count)
+        prefix = 'val' if validation else 'train'
+
+        tbwriter.add_image(prefix + ' orig images', vutils.make_grid(orig_images, normalize=True), iter_count)
+        tbwriter.add_image(prefix + ' gen images', vutils.make_grid(gen_images, normalize=True), iter_count)
+        tbwriter.add_image(prefix + ' real images', vutils.make_grid(real_images, normalize=True), iter_count)
 
 
-    def _show_images_in_jupyter(self, image_sets:[ModelImageSet]):
+    def _show_images_in_jupyter(self, image_sets:[ModelImageSet], validation:bool):
         #TODO:  Parameterize these
         figsize=(20,20)
         max_columns=4
         immediate_display=True
-        self.model_vis.plot_images_from_image_sets(image_sets, figsize=figsize, max_columns=max_columns, immediate_display=immediate_display)
+        self.model_vis.plot_images_from_image_sets(image_sets, figsize=figsize, max_columns=max_columns, 
+            immediate_display=immediate_display, validation=validation)
 
 
 class WganTrainerStatsVisualizer():

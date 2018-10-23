@@ -36,8 +36,6 @@ class NoiseVectorToImageDataset(FilesDataset):
 
 
 class ImageGenDataLoader():
-    md_cache = {}
-
     def __init__(self, sz:int, bs:int, path:Path, random_seed=None, x_noise:int=None, 
             keep_pct:float=1.0, x_tfms:[Transform]=[], file_exts=('jpg','jpeg','png')):
         
@@ -55,40 +53,51 @@ class ImageGenDataLoader():
         if self.md is not None:
             return self.md
 
-        cache_key = str(self.path) + str(self.sz)
-        if cache_key in ImageGenDataLoader.md_cache:
-            self.md = md
-            return ImageGenDataLoader.md_cache[cache_key]
-
+        resize_amt = self._get_resize_amount()
         resize_folder = 'tmp'
+        ((val_x,trn_x),(val_y,trn_y)) = self._get_filename_sets(resize_folder)
+        aug_tfms = [RandomFlip(tfm_y=TfmType.PIXEL), RandomZoom(zoom_max=0.18, tfm_y=TfmType.PIXEL)] 
+        tfms = (tfms_from_stats(inception_stats, self.sz, tfm_y=TfmType.PIXEL, aug_tfms=aug_tfms))
+        dstype = NoiseVectorToImageDataset if self.x_noise is not None else MatchedFilesDataset
+        datasets = ImageData.get_ds(dstype, (trn_x,trn_y), (val_x,val_y), tfms, path=self.path, x_tfms=self.x_tfms, x_noise=self.x_noise)
+        resize_path = os.path.join(self.path,resize_folder,str(resize_amt))
+        self.md = self._load_model_data(resize_folder, resize_path, resize_amt, datasets, trn_x)
+        return self.md
+
+    def _load_model_data(self, resize_folder:str, resize_path:str, resize_amt:int, datasets, trn_x):
+        #optimization
+        if os.path.exists(os.path.join(resize_path,trn_x[0])):
+            return ImageData(Path(resize_path), datasets, self.bs, num_workers=16, classes=None)
+        
+        md = ImageData(self.path.parent, datasets, self.bs, num_workers=16, classes=None)
+        if resize_amt != self.sz: 
+            md = md.resize(resize_amt, new_path=resize_folder)
+
+        return md
+
+    def _get_filename_sets(self, resize_folder:str):
         exclude_str = '/' + resize_folder + '/'
         paths = find_files_recursively(self.path,self.file_exts) 
         paths = filter(lambda path: not re.search(exclude_str, str(path)), paths)
         fnames_full = [Path(str(fname).replace(str(self.path) + '/','')) for fname in paths] 
+        self._update_np_random_seed()
+        keeps = np.random.rand(len(fnames_full)) < self.keep_pct
+        fnames = np.array(fnames_full, copy=False)[keeps]
+        val_idxs = get_cv_idxs(len(fnames), val_pct=min(0.01/self.keep_pct, 0.1))
+        return split_by_idx(val_idxs, np.array(fnames), np.array(fnames))
 
+    def _update_np_random_seed(self):
         if self.random_seed is None:
             np.random.seed()
         else:
             np.random.seed(self.random_seed)
-        keeps = np.random.rand(len(fnames_full)) < self.keep_pct
-        fnames = np.array(fnames_full, copy=False)[keeps]
-        val_idxs = get_cv_idxs(len(fnames), val_pct=min(0.01/self.keep_pct, 0.1))
-        ((val_x,trn_x),(val_y,trn_y)) = split_by_idx(val_idxs, np.array(fnames), np.array(fnames))
-        aug_tfms = [RandomFlip()] 
-        tfms = (tfms_from_stats(inception_stats, self.sz, tfm_y=TfmType.PIXEL, aug_tfms=aug_tfms))
-        dstype = NoiseVectorToImageDataset if self.x_noise is not None else MatchedFilesDataset
-        datasets = ImageData.get_ds(dstype, (trn_x,trn_y), (val_x,val_y), tfms, path=self.path, x_tfms=self.x_tfms, x_noise=self.x_noise)
-        resize_path = os.path.join(self.path,resize_folder,str(self.sz*2))
 
-        #optimization
-        if os.path.exists(os.path.join(resize_path,fnames[0])):
-            self.md = ImageData(Path(resize_path), datasets, self.bs, num_workers=16, classes=None)
-        else:
-            self.md = ImageData(self.path.parent, datasets, self.bs, num_workers=16, classes=None)
-            if self.sz<256: 
-                self.md = self.md.resize(self.sz*2, new_path=resize_folder)
+    def _get_resize_amount(self):
+        if self.sz<96:
+            return 128
+        if self.sz <192:
+            return 256
+        return self.sz
 
-        ImageGenDataLoader.md_cache[cache_key] = self.md
-        return self.md
 
     
