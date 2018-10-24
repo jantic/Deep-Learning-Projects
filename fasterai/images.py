@@ -70,6 +70,8 @@ class ModelImageSet():
     def get_list_from_model(ds: FilesDataset, model: nn.Module, idxs:[int]):
         image_sets = []
         rand = ModelImageSet._is_random_vector(ds[0][0])
+        training = model.training
+        model.eval()
         
         for idx in idxs:
             x,y=ds[idx]
@@ -94,6 +96,9 @@ class ModelImageSet():
         #reseting noise back to random random
         if rand:
             np.random.seed()
+
+        if training:
+            model.train()
 
         return image_sets  
 

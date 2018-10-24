@@ -31,10 +31,14 @@ class ModelImageVisualizer():
             self.plot_image_from_ndarray(result, figsize=figsize)
 
     def get_transformed_image_ndarray(self, path: Path, model: nn.Module, ds:FilesDataset, sz:int=None, tfms:[Transform]=[]):
+        training = model.training 
+        model.eval()
         orig = self.get_model_ready_image_ndarray(path, model, ds, sz, tfms)
         orig = VV(orig[None])
         result = model(orig).detach().cpu().numpy()
         result = ds.denorm(result)
+        if training:
+            model.train()
         return result[0]
 
     def _transform(self, orig, tfms:[Transform], model: nn.Module, sz:int):
