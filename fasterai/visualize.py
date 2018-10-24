@@ -18,9 +18,17 @@ class ModelImageVisualizer():
     def __init__(self, default_sz:int=500):
         self.default_sz=default_sz 
 
-    def plot_transformed_image(self, path: Path, model: nn.Module, ds:FilesDataset, figsize=(10,10), sz:int=None, tfms:[Transform]=[]):
+    def plot_transformed_image(self, path: Path, model: nn.Module, ds:FilesDataset, figsize=(20,20), sz:int=None, 
+            tfms:[Transform]=[], compare:bool=True):
         result = self.get_transformed_image_ndarray(path, model,ds, sz, tfms=tfms)
-        self.plot_image_from_ndarray(result, figsize=figsize)
+        if compare: 
+            orig = self.get_model_ready_image_ndarray(path, model, ds, sz, tfms)
+            orig = ds.denorm(orig)[0]
+            fig,axes = plt.subplots(1, 2, figsize=figsize)
+            self.plot_image_from_ndarray(orig, axes=axes[0], figsize=figsize)
+            self.plot_image_from_ndarray(result, axes=axes[1], figsize=figsize)
+        else:
+            self.plot_image_from_ndarray(result, figsize=figsize)
 
     def get_transformed_image_ndarray(self, path: Path, model: nn.Module, ds:FilesDataset, sz:int=None, tfms:[Transform]=[]):
         orig = self.get_model_ready_image_ndarray(path, model, ds, sz, tfms)
