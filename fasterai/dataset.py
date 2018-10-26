@@ -56,7 +56,9 @@ class ImageGenDataLoader():
         resize_amt = self._get_resize_amount()
         resize_folder = 'tmp'
         ((val_x,trn_x),(val_y,trn_y)) = self._get_filename_sets(resize_folder)
-        aug_tfms = [RandomFlip(tfm_y=TfmType.PIXEL), RandomZoom(zoom_max=0.18, tfm_y=TfmType.PIXEL)] 
+        #NO for random lighting y transform, because we want the network to compensate for non-ideal photos
+        aug_tfms = [RandomFlip(tfm_y=TfmType.PIXEL), RandomZoom(zoom_max=0.18, tfm_y=TfmType.PIXEL), 
+            RandomLighting(0.3, 0.3, tfm_y=TfmType.NO)] 
         tfms = (tfms_from_stats(inception_stats, self.sz, tfm_y=TfmType.PIXEL, aug_tfms=aug_tfms))
         dstype = NoiseVectorToImageDataset if self.x_noise is not None else MatchedFilesDataset
         datasets = ImageData.get_ds(dstype, (trn_x,trn_y), (val_x,val_y), tfms, path=self.path, x_tfms=self.x_tfms, x_noise=self.x_noise)
@@ -71,7 +73,7 @@ class ImageGenDataLoader():
         
         md = ImageData(self.path.parent, datasets, self.bs, num_workers=16, classes=None)
         if resize_amt != self.sz: 
-            md = md.resize(resize_amt, new_path=resize_folder)
+            md = md.resize(resize_amt, new_path=str(resize_folder))
 
         return md
 

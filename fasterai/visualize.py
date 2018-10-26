@@ -22,8 +22,7 @@ class ModelImageVisualizer():
             tfms:[Transform]=[], compare:bool=True):
         result = self.get_transformed_image_ndarray(path, model,ds, sz, tfms=tfms)
         if compare: 
-            orig = self.get_model_ready_image_ndarray(path, model, ds, sz, tfms)
-            orig = ds.denorm(orig)[0]
+            orig = open_image(str(path))
             fig,axes = plt.subplots(1, 2, figsize=figsize)
             self.plot_image_from_ndarray(orig, axes=axes[0], figsize=figsize)
             self.plot_image_from_ndarray(result, axes=axes[1], figsize=figsize)
