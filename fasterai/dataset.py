@@ -37,7 +37,8 @@ class NoiseVectorToImageDataset(FilesDataset):
 
 class ImageGenDataLoader():
     def __init__(self, sz:int, bs:int, path:Path, random_seed=None, x_noise:int=None, 
-            keep_pct:float=1.0, x_tfms:[Transform]=[], file_exts=('jpg','jpeg','png')):
+            keep_pct:float=1.0, x_tfms:[Transform]=[], file_exts=('jpg','jpeg','png'), 
+            extra_aug_tfms:[Transform]=[], reduce_x_scale=1):
         
         self.md = None
         self.sz = sz
@@ -48,6 +49,8 @@ class ImageGenDataLoader():
         self.random_seed = random_seed
         self.keep_pct = keep_pct
         self.file_exts = file_exts
+        self.extra_aug_tfms=extra_aug_tfms
+        self.reduce_x_scale=reduce_x_scale
 
     def get_model_data(self):
         if self.md is not None:
@@ -56,10 +59,11 @@ class ImageGenDataLoader():
         resize_amt = self._get_resize_amount()
         resize_folder = 'tmp'
         ((val_x,trn_x),(val_y,trn_y)) = self._get_filename_sets(resize_folder)
-        #NO for random lighting y transform, because we want the network to compensate for non-ideal photos
-        aug_tfms = [RandomFlip(tfm_y=TfmType.PIXEL), RandomZoom(zoom_max=0.18, tfm_y=TfmType.PIXEL), 
-            RandomLighting(0.3, 0.3, tfm_y=TfmType.NO)] 
-        tfms = (tfms_from_stats(inception_stats, self.sz, tfm_y=TfmType.PIXEL, aug_tfms=aug_tfms))
+        aug_tfms = [RandomFlip(tfm_y=TfmType.PIXEL), RandomZoom(zoom_max=0.18, tfm_y=TfmType.PIXEL)] 
+        aug_tfms.extend(self.extra_aug_tfms)
+        sz_x = self.sz//self.reduce_x_scale
+        sz_y = self.sz
+        tfms = (tfms_from_stats(inception_stats, sz=sz_x, sz_y=sz_y, tfm_y=TfmType.PIXEL, aug_tfms=aug_tfms))
         dstype = NoiseVectorToImageDataset if self.x_noise is not None else MatchedFilesDataset
         datasets = ImageData.get_ds(dstype, (trn_x,trn_y), (val_x,val_y), tfms, path=self.path, x_tfms=self.x_tfms, x_noise=self.x_noise)
         resize_path = os.path.join(self.path,resize_folder,str(resize_amt))

@@ -121,7 +121,8 @@ class WGANTrainSchedule():
     @staticmethod
     def generate_schedules(szs:[int], bss:[int], path:Path, keep_pcts:[float], save_base_name:str, 
         c_lrs:[float], g_lrs:[float], gen_freeze_tos:[int], lrs_unfreeze_factor:float=0.1, 
-        x_noise:int=None, random_seed=None, x_tfms:[Transform]=[]):
+        x_noise:int=None, random_seed=None, x_tfms:[Transform]=[], extra_aug_tfms:[Transform]=[],
+        reduce_x_scale=1):
 
         scheds = []
 
@@ -136,7 +137,8 @@ class WGANTrainSchedule():
             gen_save_path = path.parent/(save_base_name + '_gen_' + str(sz) + '.h5')
             sched = WGANTrainSchedule(sz=sz, bs=bs, path=path, critic_lrs=critic_lrs, gen_lrs=gen_lrs,
                 critic_save_path=critic_save_path, gen_save_path=gen_save_path, random_seed=random_seed,
-                x_noise=x_noise, keep_pct=keep_pct, x_tfms=x_tfms, gen_freeze_to=gen_freeze_to)
+                x_noise=x_noise, keep_pct=keep_pct, x_tfms=x_tfms, extra_aug_tfms=extra_aug_tfms,  
+                reduce_x_scale=reduce_x_scale, gen_freeze_to=gen_freeze_to)
             scheds.append(sched)
         
         return scheds
@@ -144,11 +146,12 @@ class WGANTrainSchedule():
 
     def __init__(self, sz:int, bs:int, path:Path, critic_lrs:[float], gen_lrs:[float],
             critic_save_path: Path, gen_save_path: Path, random_seed=None, x_noise:int=None, 
-            keep_pct:float=1.0, num_epochs=1, x_tfms:[Transform]=[], gen_freeze_to=0):
+            keep_pct:float=1.0, num_epochs=1, x_tfms:[Transform]=[], extra_aug_tfms:[Transform]=[], 
+            reduce_x_scale=1, gen_freeze_to=0):
         self.md = None
 
         self.data_loader = ImageGenDataLoader(sz=sz, bs=bs, path=path, random_seed=random_seed, x_noise=x_noise,
-            keep_pct=keep_pct, x_tfms=x_tfms)
+            keep_pct=keep_pct, x_tfms=x_tfms, extra_aug_tfms=extra_aug_tfms, reduce_x_scale=reduce_x_scale)
         self.sz = sz
         self.bs = bs
         self.path = path

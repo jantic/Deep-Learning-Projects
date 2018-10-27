@@ -137,8 +137,9 @@ class DCGenerator(GeneratorModule):
         return self.out(self.features(input))
  
 class Unet34(GeneratorModule): 
-    def __init__(self, nf_factor:int=1, bn=True, sn=True, self_attention=False, leakyReLu=True):
+    def __init__(self, nf_factor:int=1, bn=True, sn=True, self_attention=False, leakyReLu=True , scale:int=1):
         super().__init__()
+        assert (math.log(scale,2)).is_integer()
         self.rn, self.lr_cut = get_pretrained_resnet_base()
         self.sfs = [SaveFeatures(self.rn[i]) for i in [2,4,5,6]]
 
@@ -146,7 +147,7 @@ class Unet34(GeneratorModule):
         self.up2 = UnetBlock(256*nf_factor,128,256*nf_factor, sn=sn, leakyReLu=leakyReLu, bn=bn)
         self.up3 = UnetBlock(256*nf_factor,64,256*nf_factor, sn=sn, self_attention=self_attention, leakyReLu=leakyReLu, bn=bn)
         self.up4 = UnetBlock(256*nf_factor,64,256*nf_factor, sn=sn, leakyReLu=leakyReLu, bn=bn)
-        self.up5 = UpSampleBlock(256*nf_factor, 256*nf_factor, 2, sn=sn, leakyReLu=leakyReLu, bn=bn) 
+        self.up5 = UpSampleBlock(256*nf_factor, 256*nf_factor, 2*scale, sn=sn, leakyReLu=leakyReLu, bn=bn) 
         self.out= nn.Sequential(ConvBlock(256*nf_factor, 3, ks=3, actn=False, bn=False, sn=sn), nn.Tanh())
 
     #Gets around irritating inconsistent halving come from resnet
