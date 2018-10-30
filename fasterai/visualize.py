@@ -3,7 +3,7 @@ from matplotlib.axes import Axes
 from fastai.conv_learner import *
 from fastai.dataset import *
 from fastai.transforms import *
-from fasterai.wgan import WGANGenTrainingResult, WGANCriticTrainingResult, WGANTrainer
+from fasterai.training import GenResult, CriticResult, GANTrainer
 from fasterai.files import *
 from fasterai.images import *
 from IPython.display import display
@@ -198,23 +198,21 @@ class ImageGenVisualizer():
             immediate_display=immediate_display, validation=validation)
 
 
-class WganTrainerStatsVisualizer():
+class GANTrainerStatsVisualizer():
     def __init__(self):
         return
 
-    def write_tensorboard_stats(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult, iter_count:int, tbwriter: SummaryWriter):
-        tbwriter.add_scalar('/loss/wdist', cresult.wdist, iter_count)
+    def write_tensorboard_stats(self, gresult: GenResult, cresult: CriticResult, iter_count:int, tbwriter: SummaryWriter):
+        tbwriter.add_scalar('/loss/hingeloss', cresult.hingeloss, iter_count)
         tbwriter.add_scalar('/loss/dfake', cresult.dfake, iter_count)
         tbwriter.add_scalar('/loss/dreal', cresult.dreal, iter_count)
         tbwriter.add_scalar('/loss/gcost', gresult.gcost, iter_count)
         tbwriter.add_scalar('/loss/gcount', gresult.iters, iter_count)
         tbwriter.add_scalar('/loss/gaddlloss', gresult.gaddlloss, iter_count)
-        tbwriter.add_scalar('/loss/gpenalty', cresult.gpenalty, iter_count)
-        tbwriter.add_scalar('/loss/conpenalty', cresult.conpenalty, iter_count)
 
-    def print_stats_in_jupyter(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult):
-        print(f'\nWDist {cresult.wdist}; RScore {cresult.dreal}; FScore {cresult.dfake}; GAddlLoss {gresult.gaddlloss}; ' + 
-                f'Iters: {gresult.iters}; GCost: {gresult.gcost}; GPenalty: {cresult.gpenalty}; ConPenalty: {cresult.conpenalty}')
+    def print_stats_in_jupyter(self, gresult: GenResult, cresult: CriticResult):
+        print(f'\nHingeLoss {cresult.hingeloss}; RScore {cresult.dreal}; FScore {cresult.dfake}; GAddlLoss {gresult.gaddlloss}; ' + 
+                f'Iters: {gresult.iters}; GCost: {gresult.gcost};')
 
 
 class LearnerStatsVisualizer():

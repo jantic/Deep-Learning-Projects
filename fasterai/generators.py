@@ -183,65 +183,6 @@ class Unet34(GeneratorModule):
         for sf in self.sfs: 
             sf.remove()
 
-
-class Unet34B(GeneratorModule): 
-    def __init__(self, nf_factor:int=1, bn=True, sn=True, self_attention=False, leakyReLu=True , scale:int=1):
-        super().__init__()
-        assert (math.log(scale,2)).is_integer()
-        self.rn = resnet34(pretrained=True)
-        _,self.lr_cut = model_meta[resnet34]
-        self.relu = nn.LeakyReLU(0.2, inplace=False) if leakyReLu else nn.ReLU(inplace=False)
-        self.up1 = UnetBlock(512,256,2048*nf_factor, sn=sn, leakyReLu=leakyReLu, bn=bn)
-        self.up2 = UnetBlock(2048*nf_factor,128,1024*nf_factor, sn=sn, leakyReLu=leakyReLu, bn=bn)
-        self.up3 = UnetBlock(1024*nf_factor,64,512*nf_factor, sn=sn, self_attention=self_attention, leakyReLu=leakyReLu, bn=bn)
-        self.up4 = UnetBlock(512*nf_factor,64,256*nf_factor, sn=sn, leakyReLu=leakyReLu, bn=bn)
-        self.up5 = UpSampleBlock(256*nf_factor, 64*nf_factor, 2*scale, sn=sn, leakyReLu=leakyReLu, bn=bn) 
-        self.out= nn.Sequential(ConvBlock(64*nf_factor, 3, ks=3, actn=False, bn=False, sn=sn), nn.Tanh())
-
-
-    #Gets around irritating inconsistent halving come from resnet
-    def _pad(self, x, target):
-        h = x.shape[2] 
-        w = x.shape[3]
-
-        target_h = target.shape[2]*2
-        target_w = target.shape[3]*2
-
-        if h<target_h or w<target_w:
-            padh = target_h-h if target_h > h else 0
-            padw = target_w-w if target_w > w else 0
-            return F.pad(x, (0,padw,0,padh), "constant",0)
-
-        return x
-           
-    def forward(self, x_in: torch.Tensor):
-        enc0 = self.rn.conv1(x_in)
-        enc0 = self.rn.bn1(enc0)
-        enc0 = self.rn.relu(enc0)
-        enc0 = self.rn.maxpool(enc0)
-
-        enc1 = self.rn.layer1(enc0)
-        enc2 = self.rn.layer2(enc1)
-        enc3 = self.rn.layer3(enc2)
-        enc4 = self.rn.layer4(enc3)
-
-        x = self.relu(enc4)
-        x = self.up1(x, self._pad(enc3, x))
-        x = self.up2(x, self._pad(enc2, x))
-        x = self.up3(x, self._pad(enc1, x))
-        x = self.up4(x, self._pad(enc0, x))
-        x = self.up5(x)
-        x = self.out(x)
-        return x
-    
-    def get_layer_groups(self, precompute: bool = False)->[]:
-        lgs = lgs = list(split_by_idxs(list(self.rn.children()), [self.lr_cut]))
-        return lgs + [children(self)[1:]]
-    
-    def close(self):
-        for sf in self.sfs: 
-            sf.remove()
-
 class LearnerGenModuleWrapper():
     def __init__(self, model: GeneratorModule, name:str):
         self.model = to_gpu(model)

@@ -1,10 +1,10 @@
-from fasterai.visualize import ModelStatsVisualizer, ImageGenVisualizer, WganTrainerStatsVisualizer
+from fasterai.visualize import ModelStatsVisualizer, ImageGenVisualizer, GANTrainerStatsVisualizer
 from fasterai.visualize import LearnerStatsVisualizer, ModelGraphVisualizer, ModelHistogramVisualizer
 from numpy import ndarray
 from matplotlib.axes import Axes
 from fastai.conv_learner import *
 from fastai.dataset import *
-from fasterai.wgan import WGANGenTrainingResult, WGANCriticTrainingResult, WGANTrainer
+from fasterai.training import GenResult, CriticResult, GANTrainer
 from fasterai.files import *
 from IPython.display import display
 from tensorboardX import SummaryWriter
@@ -35,8 +35,8 @@ class ModelVisualizationHook():
         self.tbwriter.close()
         self.hook.remove()
 
-class WganVisualizationHook():
-    def __init__(self, base_dir: Path, trainer: WGANTrainer, name: str, stats_iters: int=10, 
+class GANVisualizationHook():
+    def __init__(self, base_dir: Path, trainer: GANTrainer, name: str, stats_iters: int=10, 
             visual_iters: int=200, weight_iters: int=1000, jupyter:bool=False):
         super().__init__()
         self.base_dir = base_dir
@@ -51,7 +51,7 @@ class WganVisualizationHook():
         self.weight_iters = weight_iters
         self.jupyter=jupyter
         self.img_gen_vis = ImageGenVisualizer()
-        self.stats_vis = WganTrainerStatsVisualizer()
+        self.stats_vis = GANTrainerStatsVisualizer()
         self.graph_vis = ModelGraphVisualizer()
         self.weight_vis = ModelHistogramVisualizer()
         self.trainer = trainer
@@ -61,7 +61,7 @@ class WganVisualizationHook():
         self.graph_vis.write_model_graph_to_tensorboard(ds=ds, model=self.trainer.netD, tbwriter=self.tbwriter) 
         self.graph_vis.write_model_graph_to_tensorboard(ds=ds, model=self.trainer.netG, tbwriter=self.tbwriter) 
 
-    def train_loop_hook(self, gresult: WGANGenTrainingResult, cresult: WGANCriticTrainingResult): 
+    def train_loop_hook(self, gresult: GenResult, cresult: CriticResult): 
         if self.trainer.iters % self.stats_iters == 0:
             self.stats_vis.print_stats_in_jupyter(gresult, cresult)
             self.stats_vis.write_tensorboard_stats(gresult, cresult, iter_count=self.trainer.iters, tbwriter=self.tbwriter) 
