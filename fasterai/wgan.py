@@ -25,40 +25,6 @@ class CriticModule(ABC, nn.Module):
     def get_layer_groups(self)->[]:
         pass
 
-class ResCritic(CriticModule): 
-    def _generate_eval_layers(self, nf:int=64, scale:int=32, sn:bool=True):
-        layers = [] 
-        cndf = nf
-        layers.append(ResBlock(nf=cndf, ks=3, bn=False, sn=sn, leakyReLu=True))
-
-        scale_count = 0
-        for i in range(int(math.log(scale,2))):
-            layers.append(DownSampleResBlock(ni=cndf, nf=cndf*2, bn=False, sn=sn, leakyReLu=True))
-            cndf = int(cndf*2)
-
-
-        return nn.Sequential(*layers), cndf
-            
-    def __init__(self, ni:int=3, nf:int=64, scale:int=32, sn:bool=False):
-        super().__init__()
-        assert (math.log(scale,2)).is_integer()
-        self.initial = nn.Sequential(
-            FilterScalingBlock(ni, nf, ks=7, dropout=0.2, bn=False, sn=sn, leakyReLu=True))
-
-        self.pixel_eval, nf_mid = self._generate_eval_layers(nf, scale, sn=sn)
-        self.mid = ResBlock(nf=nf_mid, ks=3, bn=False, sn=sn, leakyReLu=True)
-        self.out = ConvBlock(nf_mid, 1, ks=1, stride=1, pad=0, bias=False, actn=False, bn=False, sn=sn, leakyReLu=True) 
-        
-    def forward(self, input: torch.Tensor):
-        x = self.initial(input)
-        x = self.pixel_eval(x)
-        x = self.mid(x)
-        return self.out(x), x
-
-    def get_layer_groups(self)->[]:
-        return [children(self)]
-
-
 class DCCritic(CriticModule):
 
     def _generate_reduce_layers(self, nf:int, sn:bool, use_attention:bool=False):
@@ -206,17 +172,20 @@ class WGANTrainer():
                 self.gen_sched.init_lrs = lrs_gen
                 self.critic_sched.init_lrs = lrs_critic
             
-            self.netG.freeze_to(sched.gen_freeze_to)
+            self._get_inner_module(self.netG).freeze_to(sched.gen_freeze_to)
             self.critic_sched.on_train_begin()
             self.gen_sched.on_train_begin()
         
             for epoch in trange(epochs):
                 self._train_one_epoch()
 
+    def _get_inner_module(self, model:nn.Module):
+        return model.module if isinstance(model, nn.DataParallel) else model
+
     def _generate_clr_sched(self, model:nn.Module, use_clr_beta: (int), lrs: [float], cycle_len: int):
         wds = 1e-7
         opt_fn = partial(optim.Adam, betas=(0.0,0.9))
-        layer_opt = LayerOptimizer(opt_fn, model.get_layer_groups(), lrs, wds)
+        layer_opt = LayerOptimizer(opt_fn, self._get_inner_module(model).get_layer_groups(), lrs, wds)
         div,pct = use_clr_beta[:2]
         moms = use_clr_beta[2:] if len(use_clr_beta) > 3 else None
         cycle_end =  None
@@ -278,8 +247,8 @@ class WGANTrainer():
         return wdist, dfake, dreal
 
     def _train_critic(self, data_iter: Iterable, pbar: tqdm)->WGANCriticTrainingResult:
-        self.netD.set_trainable(True)
-        self.netG.set_trainable(False)
+        self._get_inner_module(self.netD).set_trainable(True)
+        self._get_inner_module(self.netG).set_trainable(False)
         orig_image, real_image = self._get_next_training_images(data_iter)
         if orig_image is None:
             return None
@@ -359,8 +328,8 @@ class WGANTrainer():
 
     def _train_generator_once(self, orig_image: torch.Tensor, real_image: torch.Tensor, 
             cresult: WGANCriticTrainingResult)->WGANGenTrainingResult:
-        self.netD.set_trainable(False)
-        self.netG.set_trainable(True)
+        self._get_inner_module(self.netD).set_trainable(False)
+        self._get_inner_module(self.netG).set_trainable(True)
         self.netG.zero_grad()         
         fake_image = self.netG(orig_image)
         gcost = -self._get_dscore(fake_image)

@@ -5,7 +5,8 @@ from torch.nn.utils.spectral_norm import spectral_norm
 
 class ConvBlock(nn.Module):
     def __init__(self, ni:int, no:int, ks:int=3, stride:int=1, pad:int=None, actn:bool=True, 
-            bn:bool=True, bias:bool=True, sn=False, leakyReLu=False, self_attention=False):
+            bn:bool=True, bias:bool=True, sn:bool=False, leakyReLu:bool=False, self_attention:bool=False,
+            inplace_relu:bool=True):
         super().__init__()   
         if pad is None: pad = ks//2//stride
 
@@ -14,7 +15,7 @@ class ConvBlock(nn.Module):
         else:
             layers = [nn.Conv2d(ni, no, ks, stride, padding=pad, bias=bias)]
         if actn:
-            layers.append(nn.LeakyReLU(0.2)) if leakyReLu else layers.append(nn.ReLU()) 
+            layers.append(nn.LeakyReLU(0.2, inplace=inplace_relu)) if leakyReLu else layers.append(nn.ReLU(inplace=inplace_relu)) 
         if bn:
             layers.append(nn.BatchNorm2d(no))
         if self_attention:
@@ -49,7 +50,7 @@ class ConvPoolMean(nn.Module):
 
 class DeconvBlock(nn.Module):
     def __init__(self, ni:int, no:int, ks:int, stride:int, pad:int, bn:bool=True, 
-            sn:bool=False, leakyReLu:bool=False, self_attention:bool=False):
+            sn:bool=False, leakyReLu:bool=False, self_attention:bool=False, inplace_relu:bool=True):
         super().__init__()
 
         layers=[]
@@ -61,9 +62,9 @@ class DeconvBlock(nn.Module):
         if bn:
             layers.append(nn.BatchNorm2d(no))
         if leakyReLu:
-            layers.append(nn.LeakyReLU(0.2))
+            layers.append(nn.LeakyReLU(0.2, inplace=inplace_relu))
         else:
-            layers.append(nn.ReLU())
+            layers.append(nn.ReLU(inplace=inplace_relu))
         if self_attention:
             layers.append(SelfAttention(no, 1))
         self.out=nn.Sequential(*layers)
@@ -145,7 +146,8 @@ class ResBlock(nn.Module):
 
 
 class DownSampleResBlock(nn.Module):
-    def __init__(self, ni:int, nf:int, res_scale:float=1.0, dropout:float=0.5, bn:bool=True, sn:bool=False, leakyReLu:bool=False):
+    def __init__(self, ni:int, nf:int, res_scale:float=1.0, dropout:float=0.5, bn:bool=True, sn:bool=False, leakyReLu:bool=False,
+            inplace_relu:bool=True):
         super().__init__()
         self.res_scale = res_scale
         layers = []
@@ -154,7 +156,7 @@ class DownSampleResBlock(nn.Module):
 
         self.mid = nn.Sequential(*layers)
         self.mid_shortcut = MeanPoolConv(ni, nf, sn=sn, leakyReLu=leakyReLu)
-        self.relu = nn.LeakyReLU(0.2) if leakyReLu else nn.ReLU()
+        self.relu = nn.LeakyReLU(0.2, inplace=inplace_relu) if leakyReLu else nn.ReLU(inplace=inplace_relu)
     
     def forward(self, x):
         x = self.mid(x)*self.res_scale + self.mid_shortcut(x)*self.res_scale
@@ -162,14 +164,15 @@ class DownSampleResBlock(nn.Module):
         return x
 
 class FilterScalingBlock(nn.Module):
-    def __init__(self, ni:int, nf:int, ks:int=3, res_scale:float=1.0, dropout:float=0.5, bn:bool=True, sn:bool=False, leakyReLu:bool=False):
+    def __init__(self, ni:int, nf:int, ks:int=3, res_scale:float=1.0, dropout:float=0.5, bn:bool=True, sn:bool=False, leakyReLu:bool=False,
+            inplace_relu:bool=True):
         super().__init__()
         self.res_scale = res_scale
         layers = []
         layers.append(ConvBlock(ni, nf, ks=1, bn=bn, sn=sn, leakyReLu=leakyReLu))
         layers.append(nn.Dropout2d(dropout))
         self.mid = nn.Sequential(*layers)
-        self.relu = nn.LeakyReLU(0.2) if leakyReLu else nn.ReLU()
+        self.relu = nn.LeakyReLU(0.2, inplace=inplace_relu) if leakyReLu else nn.ReLU(inplace=inplace_relu)
     
     def forward(self, x):
         x = self.mid(x)*self.res_scale
@@ -178,12 +181,12 @@ class FilterScalingBlock(nn.Module):
 
 class UnetBlock(nn.Module):
     def __init__(self, up_in:int , x_in:int , n_out:int, bn:bool=True, sn:bool=False, leakyReLu:bool=False, 
-        self_attention:bool=False):
+        self_attention:bool=False, inplace_relu:bool=True):
         super().__init__()
         up_out = x_out = n_out//2
-        self.x_conv  = ConvBlock(x_in,  x_out,  ks=1, bn=False, actn=False, sn=sn)
+        self.x_conv  = ConvBlock(x_in,  x_out,  ks=1, bn=False, actn=False, sn=sn, inplace_relu=inplace_relu)
         self.tr_conv = UpSampleBlock(up_in, up_out, 2, bn=bn, sn=sn, leakyReLu=leakyReLu)
-        self.relu = nn.LeakyReLU(0.2) if leakyReLu else nn.ReLU()
+        self.relu = nn.LeakyReLU(0.2, inplace=inplace_relu) if leakyReLu else nn.ReLU(inplace=inplace_relu)
         out_layers = []
         if bn: 
             out_layers.append(nn.BatchNorm2d(n_out))
