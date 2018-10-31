@@ -27,15 +27,17 @@ class CriticModule(ABC, nn.Module):
 
 class DCCritic(CriticModule):
 
-    def _generate_reduce_layers(self, nf:int, sn:bool, use_attention:bool=False):
+    def _generate_reduce_layers(self, nf:int):
         layers=[]
         layers.append(nn.Dropout2d(0.5))
-        layers.append(ConvBlock(nf, nf*2, 4, 2, bn=False, sn=sn, leakyReLu=True, self_attention=use_attention))
+        layers.append(ConvBlock(nf, nf*2, 4, 2, bn=False, sn=True, leakyReLu=True, self_attention=True))
         return layers
 
-    def __init__(self, ni:int=3, nf:int=64, scale:int=32, sn=False, self_attention=False):
+    def __init__(self, ni:int=3, nf:int=128):
         super().__init__()
-
+        scale:int=16
+        sn=True
+        self_attention=True
         assert (math.log(scale,2)).is_integer()
         self.initial = nn.Sequential(
             ConvBlock(ni, nf, 4, 2, bn=False, sn=sn, leakyReLu=True),
@@ -48,7 +50,7 @@ class DCCritic(CriticModule):
 
         for i in range(int(math.log(scale,2))-1):
             use_attention = (i == 0 and self_attention) 
-            layers = self._generate_reduce_layers(nf=cndf, sn=sn, use_attention=use_attention)
+            layers = self._generate_reduce_layers(nf=cndf)
             mid_layers.extend(layers)
             cndf = int(cndf*2)
    
